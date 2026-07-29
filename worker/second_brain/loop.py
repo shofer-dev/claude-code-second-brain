@@ -44,6 +44,9 @@ from .task import Binding, looks_like_new_goal, new_epoch, on_session_start
 from .tools import Toolbox
 from .window import Window
 
+REQUEST_TTL_S = 300.0
+"""How long a `/second-brain-run` request stays live before it is discarded."""
+
 
 @dataclass
 class DetectorState:
@@ -350,13 +353,23 @@ class Observer:
 
     # ── trigger policy ──────────────────────────────────────────────────────
     def _requested(self) -> bool:
-        """Did a human ask for a pass now? Consumed on read, so it fires once."""
+        """Did a human ask for a pass now? Consumed on read, so it fires once.
+
+        A request **expires**. The worker is a long-lived process that holds the code
+        it imported at startup, so a request written while an older worker was running
+        is never consumed — and would otherwise fire a surprising pass whenever the
+        next worker started. Asking for a pass is a live request, not a queued job.
+        """
         path = paths.trigger_path(self.session_id)
         try:
+            age = time.time() - path.stat().st_mtime
             path.unlink()
-            return True
         except OSError:
             return False
+        if age > REQUEST_TTL_S:
+            self.log.info("ignoring a pass request from %ds ago", int(age))
+            return False
+        return True
 
     def _pass_due(self) -> bool:
         # An explicit request bypasses the clock floor and the volume threshold —

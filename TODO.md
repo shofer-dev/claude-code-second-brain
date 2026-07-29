@@ -44,6 +44,15 @@ Until these are done, treat the hook drain as the only proven channel.
 
 ## Accepted trade-offs
 
+- **The worker holds its code until the session restarts.** It is a long-lived
+  process started at session start, so editing anything under `worker/` has no
+  effect on the running one — `/reload-plugins` re-arms commands and hooks but does
+  not restart the monitor's process. Symptom seen live: `/second-brain-run` appeared
+  to work while the request file was never read, because feeding the spool tripped
+  the ordinary volume trigger instead. The command now says so when it detects an
+  older worker, and a request expires after five minutes so a stale one cannot fire
+  a pass later. Restart the session after changing worker code.
+
 - **The `mcp` SDK is an optional dependency.** `mcpclient.py` is a thin adapter
   over the official SDK — one session per server, shared across forks — but the SDK
   is not vendored, so on a machine without it every MCP-granted tool is absent. That

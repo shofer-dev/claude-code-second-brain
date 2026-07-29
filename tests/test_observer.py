@@ -277,3 +277,37 @@ def test_status_is_written_through_for_the_human_surfaces(observer):
     assert record["passes"] == 1
     assert record["observed_chars"] > 0
     assert "default" in record["detectors"]
+
+
+def test_a_pass_request_fires_once_and_expires(observer, tmp_path):
+    """`/second-brain-run` is a live request, not a queued job.
+
+    The worker holds the code it imported at startup, so a request written while an
+    older worker was running is never consumed — and must not fire a surprising pass
+    whenever the next worker happens to start.
+    """
+    import os
+    from second_brain import paths
+    from second_brain.loop import REQUEST_TTL_S
+
+    observer.provider = FakeProvider({"*": [_silent()]})
+    observer.cfg.values["loop"]["min_interval_s"] = 3600      # the throttle is bypassed
+    observer.cfg.values["loop"]["trigger_chars"] = 10_000_000  # so is the volume threshold
+    observer.last_pass_start = time.time()
+    feed("s-obs", text())
+    tick(observer)
+    assert observer.pass_number == 0                          # nothing is due on its own
+
+    request = paths.trigger_path("s-obs")
+    paths.write_private(request, "{}")
+    tick(observer)
+    assert observer.pass_number == 1
+    assert not request.exists()                               # consumed, so it fires once
+
+    paths.write_private(request, "{}")
+    stale = time.time() - REQUEST_TTL_S - 60
+    os.utime(request, (stale, stale))
+    feed("s-obs", text())
+    tick(observer)
+    assert observer.pass_number == 1                          # too old to honour
+    assert not request.exists()                               # …and cleaned up regardless

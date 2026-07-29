@@ -211,6 +211,13 @@ def cmd_run(argv: list[str]) -> int:
         fresh = status.read(session_id) or {}
         if int(fresh.get("passes", 0) or 0) > before:
             print(f"   pass {fresh.get('passes')} completed in {fresh.get('last_pass_s')}s\n")
+            if "last_feedback" not in fresh:
+                # The worker is a long-lived process holding the code it imported at
+                # startup — an older one reports no per-detector lines, and did not
+                # honour the request either (the pass it ran was the ordinary volume
+                # trigger firing on what this command just fed it).
+                print("   (this worker started before per-detector reporting existed — "
+                      "restart the session to pick up the current code)")
             for line in fresh.get("last_feedback") or []:
                 print(f"   {line}")
             pending = mailbox.peek(session_id)
