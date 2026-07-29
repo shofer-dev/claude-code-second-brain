@@ -1011,6 +1011,32 @@ So a pass is deliberately **pilot-then-fan-out**:
    `repeat-failure` — so the critical path added before fan-out is as short as possible, and
    never a detector that might spend 20 seconds in a build.
 
+#### What the cache actually does, measured
+
+Four consecutive passes against the live API (Haiku, one detector, growing window):
+
+| Pass | Shared prefix | Full-price input | Cache write | Cache read |
+|---:|---:|---:|---:|---:|
+| 1 | 512 tok | 4,391 | 0 | 0 |
+| 2 | 3,061 | 2,658 | 4,362 | 0 |
+| 3 | 5,610 | 2,658 | 2,628 | **4,361** |
+| 4 | 8,159 | 2,658 | 2,628 | **6,988** |
+
+The steady state is the one the design is built for: **each pass reads the entire
+accumulated history at cached rates and writes only its own increment**, with a
+constant uncached tail (the detector's prompt plus this pass's episode). Growth is
+paid for once, not once per pass — which is what makes a continuously-fed observer
+affordable.
+
+**But a cold task pays full price for its first passes**, and that is not a bug to
+fix. Providers refuse to cache a prefix below a minimum length, so until the window
+has accumulated a few thousand tokens there is nothing cacheable to mark — pass 1
+here cached nothing at a 512-token prefix, and the first write landed at pass 2.
+Two consequences worth stating rather than discovering: a task that ends after one
+or two passes never benefits from the caching at all (it is still cheap, just not
+*this* cheap), and `loop.trigger_chars` is therefore also a cache-warm-up knob —
+larger episodes cross the minimum sooner.
+
 Two structural requirements follow, and both are easy to violate by accident:
 
 - **Every fork's prefix must be byte-identical.** Detector-specific instructions go *after* the
