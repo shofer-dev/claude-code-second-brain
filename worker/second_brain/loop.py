@@ -47,6 +47,20 @@ from .window import Window
 REQUEST_TTL_S = 300.0
 """How long a `/second-brain-run` request stays live before it is discarded."""
 
+SIGNAL_TTL_S = 300.0
+"""How recent a control record must be to change state.
+
+The spool outlives the worker, so a worker that starts without a saved read offset
+replays the whole session — and a replayed `session_start` is indistinguishable from
+a real one unless age is checked. Observed live: the first worker to start after the
+durable-offset fix replayed 8.7 hours of spool, read a stale start signal as genuine,
+minted a fresh task, and orphaned the previous ledger. Observations are safe to
+replay (they are just text); **signals are not**, because each one moves state."""
+
+
+_STATEFUL_EVENTS = frozenset({"session_start", "session_end", "stop", "user_prompt"})
+"""Control events that move state, and therefore must be fresh to be honoured."""
+
 
 @dataclass
 class DetectorState:
@@ -244,8 +258,21 @@ class Observer:
                         self.touched.append(path)
         self._coalesce()
 
+    def _live(self, obs: Observation) -> bool:
+        """Whether a record is recent enough to be acted on as a signal.
+
+        A missing timestamp counts as stale: the cost of ignoring a real signal is a
+        missed task split or a late finish gate, while the cost of acting on a
+        replayed one is a discarded ledger or a worker that exits.
+        """
+        return bool(obs.ts) and (time.time() - obs.ts) < SIGNAL_TTL_S
+
     def _handle_meta(self, obs: Observation) -> None:
         event = str(obs.meta.get("event", ""))
+        if event in _STATEFUL_EVENTS and not self._live(obs):
+            self.log.info("ignoring a replayed %s signal from %ds ago",
+                          event, int(time.time() - obs.ts) if obs.ts else -1)
+            return
         if event == "session_start":
             source = str(obs.meta.get("source", "startup"))
             previous = self.binding.task_id
@@ -282,7 +309,7 @@ class Observer:
         prevent. The split is a cheap structural proxy rather than a model call: a
         false split costs a cold start, a missed split costs an irrelevant prefix.
         """
-        if looks_like_new_goal(obs.body, time.time() - self.binding.started_at):
+        if self._live(obs) and looks_like_new_goal(obs.body, time.time() - self.binding.started_at):
             self.binding = new_epoch(self.binding, "the user stated a new goal")
             self._rebind("new goal in the same session")
             # The prompt that split the task is the new task's first observation,

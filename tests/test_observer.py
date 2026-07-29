@@ -333,3 +333,31 @@ def test_a_config_change_reaches_the_gate_without_a_restart(observer):
     assert observer.gate.cfg is not before          # the gate saw the reload
     assert observer.gate.cfg.get("gate.rate_per_hour") == 1
     assert observer.window.cfg.get("window.budget_chars") == 123_456
+
+
+def test_a_replayed_control_signal_cannot_change_state(observer):
+    """The spool outlives the worker; a restart without an offset replays it.
+
+    Observed live: the first worker to start after the durable-offset fix replayed
+    8.7 hours of spool, read a stale `session_start` as genuine, minted a new task
+    and orphaned the previous ledger. A replayed `session_end` would have been
+    worse — it would have exited the worker.
+    """
+    stale = time.time() - 86400
+    task_before = observer.binding.task_id
+
+    observer._ingest([
+        Observation(kind=META, ts=stale, body="session_start",
+                    meta={"event": "session_start", "source": "startup"}),
+        Observation(kind=META, ts=stale, body="stop", meta={"event": "stop"}),
+        Observation(kind=META, ts=stale, body="session_end", meta={"event": "session_end"}),
+        Observation(kind="user", ts=stale,
+                    body="now let's do something completely different with the deploy pipeline"),
+    ])
+    assert observer.binding.task_id == task_before   # no task minted or split
+    assert observer.turn_stopped is False            # the finish gate is not armed
+    assert observer.finished is False                # and the worker is still alive
+
+    # A fresh signal of the same kind is still honoured.
+    observer._ingest([Observation(kind=META, ts=time.time(), body="stop", meta={"event": "stop"})])
+    assert observer.turn_stopped is True
