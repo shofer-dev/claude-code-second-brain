@@ -98,6 +98,38 @@ Until these are done, treat the hook drain as the only proven channel.
   sessions each enforce their own token ceiling; there is no cross-session budget.
   The fix, if it is ever needed, is a lockfile-guarded counter — not a service.
 
+## Known drifts from a full design-vs-implementation review (2026-07-30)
+
+Confirmed against the code, accepted for now, in rough severity order:
+
+- **Cache economics on the default model warm up slowly.** Haiku 4.5's minimum
+  cacheable prefix is 4096 tokens, so a short task's passes can all report zero
+  cache activity while behaving correctly (`DESIGN.md` §What the cache actually
+  does). The OpenAI wire additionally never reports cache *writes* — implicit
+  caching has nothing to declare — so `cache_write` is 0 there by construction.
+- **Budget accounting has three leaks:** the per-task budget is never reset at a
+  task rebind (it actually bounds the worker's lifetime — conservative direction);
+  compaction's model call discards its usage; a hard-deadline-cancelled fork
+  returns zero usage, so the most expensive forks are the uncounted ones.
+- **The Edit line anchor is largely inert:** it resolves `old_string` against the
+  post-edit file, so a normal replacement anchors nothing and a re-occurring
+  string can anchor the wrong line.
+- **Two path-jail gaps:** Grep opens walked files without re-resolving symlinks
+  (an in-tree symlink file pointing outside the workspace is readable); Glob's
+  escape protection works by a `relative_to` exception rather than by design.
+- **Staleness and mute are pass-granular:** the drain hook checks expiry clocks
+  only, so an action after the last pass cannot kill a queued advisory, and a
+  mute set while advice is queued does not stop its delivery. A finish-gate
+  advisory minted before `/clear` can still block a stop afterwards.
+- **`repeat-failure` is a model judgment**, not the structural worker-side
+  trigger `DESIGN.md` §What a detector sees claims; only `cross-task-collision`
+  is structural.
+- **Rate-limit slots are charged at gate time, in memory** — expired advice still
+  burns a slot, and a worker restart resets the hour window.
+- **The envelope's adjudication fields are dead** (`delivered_at`/`channel`/
+  `verdict` on the dataclass); delivery and verdicts live in spool META records
+  and the ledger instead.
+
 ## Catalogue status
 
 Shipped enabled: `default`, `repeat-failure`, `standard-questions` — the design's

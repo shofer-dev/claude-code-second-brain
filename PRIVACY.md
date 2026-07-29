@@ -44,8 +44,12 @@ this plugin is not for that repository.
   readable form, so no design can send them and this one does not try.
 - **Anything from a workspace that has not opted in.** The feed hook checks
   enrolment *before* it opens a transcript.
-- **Anything at all while muted.** `/second-brain-mute all` stops observation, not
-  just advice.
+- **Anything while a mute holds.** `/second-brain-mute all` stops passes and
+  delivery: no model call is made and nothing leaves the machine for the duration.
+  Observation itself stays local while muted, so what happened during the mute is
+  included in the first pass after an unmute — muting silences the output, it does
+  not blind the input. To stop observation entirely, disable the workspace
+  (`/second-brain-config set enable.default false`).
 - **Ledger content, window contents, or advisory text between tasks.** The one
   thing shared across tasks is a live index of task ids, working directories,
   touched paths and timestamps — never text.

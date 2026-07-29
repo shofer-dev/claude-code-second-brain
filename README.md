@@ -81,7 +81,7 @@ is still worth a person's glance, and it is free.
 | `/second-brain-run` | **Ask it to look now** — catches up from the transcript, runs one pass, prints every detector's verdict and any advisory. Bypasses the pass throttle, not the mute or the budget. The fastest way to see it work |
 | `/second-brain-why` | The recent advisories with their evidence and adjudicated verdicts — **and the ones the gate dropped, with the reason** |
 | `/second-brain-config` | Every threshold, cap and interval, with the layer each value came from; `set` validates before writing and running workers pick it up at the next pass boundary |
-| `/second-brain-mute` | Silence everything, this workspace, or one detector, optionally for a duration. Muting everything stops **observation**, not just advice |
+| `/second-brain-mute` | Silence everything, this workspace, or one detector, optionally for a duration. A mute stops passes and delivery — nothing leaves the machine — while observation continues locally, so an unmute resumes without a gap |
 | `/second-brain-unmute` | Undo it |
 | `/second-brain-forget` | Drop a task ledger, a workspace's, or all of them |
 
