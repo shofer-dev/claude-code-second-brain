@@ -60,8 +60,14 @@ def cmd_stats(argv: list[str]) -> int:
         return 0
 
     updated = float(record.get("updated_at", 0))
-    live = time.time() - updated < 120
-    print(f"   state: {record.get('state')}   ({'live' if live else 'stale, last written ' + _age(updated)})")
+    state = str(record.get("state", "?"))
+    if state == "stopped":
+        freshness = "the worker has exited; these are its final numbers"
+    elif time.time() - updated < 120:
+        freshness = "live"
+    else:
+        freshness = f"stale, last written {_age(updated)}"
+    print(f"   state: {state}   ({freshness})")
     print(f"   task: {record.get('task_id')}   model: {record.get('model')}   "
           f"hosted by: {record.get('hosted_by')}")
 

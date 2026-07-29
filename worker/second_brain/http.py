@@ -56,12 +56,22 @@ async def _once(url: str, headers: dict[str, str], payload: dict[str, Any],
     except ImportError:
         return await asyncio.to_thread(_urllib_post, url, headers, payload, timeout)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, headers=headers, json=payload)
-        if response.status_code >= 400:
-            raise HttpError(response.status_code, response.text)
-        data: dict[str, Any] = response.json()
-        return data
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code >= 400:
+                raise HttpError(response.status_code, response.text)
+            data: dict[str, Any] = response.json()
+            return data
+    except httpx.HTTPError as exc:
+        # Every transport failure leaves through the same door. Without this,
+        # `httpx.ConnectError` (a provider that is simply unreachable — the most
+        # ordinary failure there is) escapes the retry logic *and* the ProviderError
+        # contract, and surfaces as an unhandled traceback in the observer loop
+        # instead of one quiet degradation to silence.
+        raise HttpError(0, f"{type(exc).__name__}: {exc}") from exc
+    except ValueError as exc:                     # a 200 that is not JSON
+        raise HttpError(0, f"malformed response: {exc}") from exc
 
 
 async def post_json(url: str, headers: dict[str, str], payload: dict[str, Any],

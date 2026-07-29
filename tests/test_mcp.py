@@ -131,3 +131,38 @@ def test_no_configured_servers_means_no_work_at_all():
     hub = McpHub({})
     asyncio.run(hub.start())
     assert hub.servers == {} and hub.available is False
+
+
+# ── transport failures leave through one door ───────────────────────────────
+def test_every_transport_failure_becomes_an_http_error():
+    """A provider that is simply unreachable must degrade, not raise a traceback.
+
+    `httpx` raises its own exception hierarchy, which is neither `HttpError` nor
+    `ProviderError` — so without the mapping a connection refusal escapes the retry
+    logic and the fork's error handling, and surfaces as an unhandled exception in
+    the observer loop. Caught by running the real worker against a dead address.
+    """
+    # `_once`, not `post_json`: the conftest fixture disables the latter so that no
+    # test can reach a provider. This one deliberately dials a dead local port.
+    from second_brain.http import HttpError, _once
+
+    with pytest.raises(HttpError) as caught:
+        asyncio.run(_once("http://127.0.0.1:1/v1/messages", {}, {"x": 1}, 1.0))
+    assert caught.value.status == 0
+    assert "Error" in str(caught.value)
+
+
+def test_a_provider_failure_reaches_the_fork_as_a_provider_error(monkeypatch):
+    from second_brain import http, provider
+    from second_brain.config import Config
+
+    async def refuse(*_a, **_k):
+        raise http.HttpError(0, "ConnectError: all connection attempts failed")
+
+    monkeypatch.setattr(http, "post_json", refuse)
+    monkeypatch.setattr(provider, "post_json", refuse)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
+    client = provider.AnthropicProvider(Config.load(None))
+    with pytest.raises(provider.ProviderError):
+        asyncio.run(client.send(system=[{"type": "text", "text": "s"}],
+                                messages=[{"role": "user", "content": "hi"}]))
