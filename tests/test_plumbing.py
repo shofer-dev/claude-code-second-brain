@@ -522,3 +522,47 @@ def test_primary_usage_is_summed_from_the_transcript(tmp_path, monkeypatch):
     totals = transcript.primary_usage("s-usage")
     assert totals == {"input": 30, "output": 12, "cache_read": 3000, "cache_write": 100}
     assert transcript.primary_usage("no-such-session") == {}
+
+
+# ── the statusline: visibility with no model in the loop ────────────────────
+def _statusline(context: dict) -> str:
+    return subprocess.run(
+        [sys.executable, str(ROOT / "statusline" / "statusline.py")],
+        input=json.dumps(context), capture_output=True, text=True,
+        env={**os.environ}, check=False,
+    ).stdout.strip()
+
+
+def test_the_statusline_renders_state_passes_and_cost():
+    from second_brain.status import Status
+
+    record = Status(session_id="s-line", task_id="t", workspace="/w", cwd="/w",
+                    model="claude-haiku-4-5", state="watching", passes=3)
+    record.tokens = {"input": 200_000, "output": 1_000, "cache_read": 0, "cache_write": 0}
+    record.advisories_delivered = 1
+    record.save()
+
+    line = _statusline({"session_id": "s-line"})
+    assert line.startswith("🧠 watching")
+    assert "3 passes" in line and "1 advisory" in line
+    assert "$0.20" in line                       # 200k input on Haiku = $0.20
+
+
+def test_the_statusline_says_nothing_when_nothing_is_watching():
+    assert _statusline({"cwd": "/nowhere-enrolled"}) == ""
+
+
+def test_a_stopped_worker_leaves_the_statusline_empty():
+    from second_brain.status import Status
+    Status(session_id="s-gone", workspace="/w", state="stopped").save()
+    assert _statusline({"session_id": "s-gone"}) == ""
+
+
+def test_the_statusline_flags_a_stale_worker():
+    from second_brain.status import Status
+    record = Status(session_id="s-stale", workspace="/w", state="watching", passes=1)
+    record.save()
+    stored = json.loads(paths.status_path("s-stale").read_text())
+    stored["updated_at"] = time.time() - 3600
+    paths.write_private(paths.status_path("s-stale"), json.dumps(stored))
+    assert "stale" in _statusline({"session_id": "s-stale"})

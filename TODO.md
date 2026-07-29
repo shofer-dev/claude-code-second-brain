@@ -35,7 +35,6 @@ Until these are done, treat the hook drain as the only proven channel.
 
 ## Not implemented
 
-- **Statusline segment.** Nothing reads the status file into a statusline yet.
 - **Resumed-task digest on `SessionStart`.** A resumed task's ledger is loaded by
   the worker but never surfaced to the primary (Phase 5 in the design).
 - **Staleness check on resuming a long-dormant task.** Open question #9: a task
@@ -43,6 +42,14 @@ Until these are done, treat the hook drain as the only proven channel.
   ledger's cited locators are not re-validated.
 
 ## Accepted trade-offs
+
+- **A slash command always costs a model turn.** Claude Code commands are prompts:
+  the `!` block runs, its output is injected, and the model is invoked to relay it.
+  The frontmatter schema has no opt-out (verified against the installed CLI —
+  `disable-model-invocation` is the inverse, stopping the *model* from invoking the
+  command). So `/second-brain-stats` spins the primary loop, which sits awkwardly
+  beside the design's claim that the human surfaces cost nothing. The statusline and
+  `!` bash mode are the model-free paths, and both are documented in the README.
 
 - **The worker holds its code until the session restarts.** It is a long-lived
   process started at session start, so editing anything under `worker/` has no

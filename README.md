@@ -85,6 +85,34 @@ is still worth a person's glance, and it is free.
 | `/second-brain-unmute` | Undo it |
 | `/second-brain-forget` | Drop a task ledger, a workspace's, or all of them |
 
+### Reading status without spending a model turn
+
+Every Claude Code slash command is a *prompt*: the `!` block runs, its output is
+injected, and then the model is invoked to relay it. That is fine for a considered
+read of `/second-brain-why`, and wrong for "is it watching, and what has it cost?" —
+a question you want answered continuously and for free. Two paths avoid the model
+entirely:
+
+**The statusline** — the harness runs the command itself and prints what it returns.
+Add to `settings.json`:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "python3 ~/.claude/plugins/cache/shofer-second-brain/second-brain/0.1.0/statusline/statusline.py"
+}
+```
+
+It renders `🧠 watching · 3 passes · $0.04`, and prints **nothing** when no worker is
+watching — an empty segment is the honest display for "not running".
+
+**Bash mode** — type `!` in the prompt and the command runs in-session with its
+output landing directly in the conversation, no turn:
+
+```
+!python3 ~/.claude/plugins/cache/shofer-second-brain/second-brain/0.1.0/commands/sb.py stats
+```
+
 ## Detectors
 
 A detector is its own system prompt, its own tool set (empty by default), its own

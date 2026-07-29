@@ -1795,7 +1795,12 @@ plus everything below, which is deliberately kept out of the model's context:
 - **`/second-brain-mute`** — this task, this workspace, or a named detector, with an optional
   duration.
 - **`/second-brain-forget`** — drop a task ledger, a workspace's ledgers, or all of them.
-- **statusline segment** (optional) — a quiet indicator: watching / thinking / muted / cost.
+- **statusline segment** — a quiet indicator: watching / thinking / muted / cost,
+  rendered by the harness running one command. **This is the only surface that costs
+  nothing at all**: a slash command in Claude Code is a prompt, so it spends a model
+  turn relaying its own output, while the statusline and `!` bash mode do not. For
+  "is it watching, and what has it cost?" — a question asked continuously — that
+  distinction is the whole point.
 
 **How they work with no service to query.** There is no endpoint, so the commands are file
 operations against `${CLAUDE_PLUGIN_DATA}`, which keeps them working whether or not a worker is
@@ -1942,7 +1947,7 @@ missing.
 | 2 — the observer | **built.** Provider, append-only window with neutral compaction, task identity and ledger, trigger policy, single-flight passes, budgets, pilot-then-fan-out |
 | 3 — the gate and the feedback loop | **built.** Confidence split, semantic dedup, rate limit, staleness re-check, mute, outcome adjudication and the calibration it feeds, `/second-brain-config`, `/stats`, `/why` |
 | 4 — detectors + MCP client | **built.** The catalogue is defined, the tool-less detectors ship enabled, and the MCP client is a thin adapter over the official SDK — one session per server, shared across forks. The SDK is an optional dependency: without it, granted MCP tools are *absent and reported*, never silently stubbed |
-| 5 — hardening | **partly.** Ledger GC, `/second-brain-forget`, the finish gate (both halves) and the cross-task index are built; the statusline and the resumed-task digest are not |
+| 5 — hardening | **partly.** Ledger GC, `/second-brain-forget`, the finish gate (both halves), the cross-task index and the statusline are built; the resumed-task digest is not |
 
 **Phase 0 — verify the mechanics.** The monitor is now load-bearing twice over — it hosts the
 worker *and* delivers — so its properties are the first thing to confirm, not the last. On the
