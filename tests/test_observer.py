@@ -311,3 +311,25 @@ def test_a_pass_request_fires_once_and_expires(observer, tmp_path):
     tick(observer)
     assert observer.pass_number == 1                          # too old to honour
     assert not request.exists()                               # …and cleaned up regardless
+
+
+def test_a_config_change_reaches_the_gate_without_a_restart(observer):
+    """`/second-brain-config` promises a running worker picks changes up.
+
+    The Observer, the gate and the window each hold a Config; reloading only the
+    Observer's leaves the other two on the previous object, so every `gate.*` and
+    `window.*` knob appears set and does nothing.
+    """
+    from second_brain.config import set_value
+
+    observer.provider = FakeProvider({"*": [_silent()]})
+    before = observer.gate.cfg
+    set_value("gate.rate_per_hour", 1, scope="global")
+    set_value("window.budget_chars", 123_456, scope="global")
+
+    feed("s-obs", text(), tool())
+    tick(observer)
+
+    assert observer.gate.cfg is not before          # the gate saw the reload
+    assert observer.gate.cfg.get("gate.rate_per_hour") == 1
+    assert observer.window.cfg.get("window.budget_chars") == 123_456

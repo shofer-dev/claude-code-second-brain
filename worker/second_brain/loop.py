@@ -398,7 +398,13 @@ class Observer:
 
     # ── one pass ────────────────────────────────────────────────────────────
     async def _run_pass(self) -> None:
-        self.cfg = Config.load(self.workspace)          # picked up at a pass boundary
+        # Picked up at a pass boundary — and *propagated*. Rebinding this attribute
+        # alone leaves the gate and the window holding the previous Config object, so
+        # every `gate.*` and `window.*` knob would silently never take effect on a
+        # running worker while `/second-brain-config` reported it as set.
+        self.cfg = Config.load(self.workspace)
+        self.gate.cfg = self.cfg
+        self.window.cfg = self.cfg
         self.last_pass_start = time.time()
         self.pass_number += 1
         trigger = "requested" if self.forced else (self.salience_pending or "volume")
