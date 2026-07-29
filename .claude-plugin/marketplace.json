@@ -1,0 +1,17 @@
+{
+  "name": "shofer-second-brain",
+  "owner": { "name": "shofer.dev" },
+  "metadata": {
+    "description": "second-brain — a continuously-running companion model that watches a Claude Code session and delivers rare, gated, one-way advisories. Advisory only: it cannot block, veto, edit, or ask."
+  },
+  "plugins": [
+    {
+      "name": "second-brain",
+      "source": "./",
+      "description": "A cheap background model that watches your session and, rarely, drops one short advisory into it — asynchronously, without ever blocking.",
+      "homepage": "https://github.com/shofer-dev/claude-code-second-brain",
+      "repository": "https://github.com/shofer-dev/claude-code-second-brain",
+      "license": "Apache-2.0"
+    }
+  ]
+}

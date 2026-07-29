@@ -1,0 +1,9 @@
+{
+  "monitors": [
+    {
+      "name": "second-brain",
+      "description": "Hosts the Second Brain session worker (the observer loop) and pushes gated advisories as notifications.",
+      "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/worker/run.py\""
+    }
+  ]
+}

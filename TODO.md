@@ -1,0 +1,97 @@
+# TODO — what is knowingly not done
+
+Gaps, accepted trade-offs and deferred work. Nothing in `README.md` or `DESIGN.md`
+may imply a control or a feature that only this file knows is missing.
+
+## Unverified seams (Phase 0 — do this before trusting anything below it)
+
+The monitor is load-bearing twice over: it **hosts** the worker and it **delivers**.
+Neither property is verified on a live CLI yet, and the design says nothing below
+them is worth building on unverified seams.
+
+- [ ] A **plugin-declared** monitor receives `CLAUDE_CODE_SESSION_ID` in its
+      environment. Verified for the *Monitor tool* on v2.1.220 by probing a live
+      process; the plugin-declared case is a one-line check (a monitor whose
+      command is `env`) and has not been run.
+- [ ] A plugin monitor survives for the whole session and can host a long-running
+      asyncio process. **If it turns out to be short-lived, the hosting decision
+      reverts** to the hook-spawned detached worker — the same code with a worse
+      lifetime, already implemented in `spawn.py`.
+- [ ] A monitor stdout line actually wakes a *stopped* session. The finish gate's
+      deferred half depends on this and on nothing else.
+- [ ] `SubagentStop` carries `last_assistant_message` on the installed CLI.
+- [ ] `additionalContext` on `PostToolUse` reaches the model without blocking.
+
+Until these are done, treat the hook drain as the only proven channel.
+
+## Not implemented
+
+- **MCP client.** A detector may declare `{"mcp": "server-name"}` and the grant
+  parses, but `Toolbox.mcp` is always `None`, so those tools are silently absent
+  from the fork's tool list. Nothing in the shipped catalogue needs it —
+  `prior-art` works with `Grep`/`Glob` alone — but the design's "optionally a
+  code-search MCP server" is not yet true. Wants the official `mcp` Python SDK,
+  one client session per server, shared across forks.
+- **Statusline segment.** Nothing reads the status file into a statusline yet.
+- **Resumed-task digest on `SessionStart`.** A resumed task's ledger is loaded by
+  the worker but never surfaced to the primary (Phase 5 in the design).
+- **Staleness check on resuming a long-dormant task.** Open question #9: a task
+  resumed after days resumes against a repo that moved underneath it, and the
+  ledger's cited locators are not re-validated.
+
+## Accepted trade-offs
+
+- **Transport is ours, not the official SDKs.** `DESIGN.md` §What runs the loop
+  argues for the provider SDKs as typed HTTP clients. A Claude Code plugin cannot
+  assume it may install packages and the worker has to run on a bare `python3`, so
+  `provider.py` builds requests against the published wire formats and posts them
+  with `httpx` when present and `urllib` on a worker thread otherwise
+  (`http.py`). What that costs, concretely: no streaming, and retries/backoff are
+  ours (two retries on 429/5xx). Revisit if the plugin ever ships a vendored
+  dependency set.
+- **The pilot's cache-warm signal is completion, not first token.** Without
+  streaming there is no earlier signal, so the fan-out waits for the pilot fork to
+  finish rather than for its first streamed token. Costs latency on every pass,
+  never correctness.
+- **The window is not reconstructed from the transcript after a crash.** The design
+  notes the projection is deterministic and therefore replayable; the worker
+  actually restarts from the ledger plus new observations. A restart costs the warm
+  prefix *and* the uncompacted tail, not just the cache.
+- **Task splitting is a keyword heuristic, not a model judgment.** `task.py` uses
+  prefix/marker matching rather than asking the model whether a prompt is a new
+  goal. Deliberately wrong in the cheap direction (an extra split costs a cold
+  start); open question #3 asks whether it misfires often enough to matter.
+- **`static-analysis` ships with an empty command allowlist.** It cannot infer a
+  project's build command, and guessing one would be the one detector able to
+  execute guessing wrong. The workspace supplies it.
+- **Uptake is self-reported.** Constrained by evidence-or-nothing and a default of
+  `no_evidence`, but a model grading its own advice is structurally flattering.
+  Open question #2: is it honest enough to *tune the gate on*?
+- **Per-detector budgets are enforced per fork, not globally.** Two concurrent
+  sessions each enforce their own token ceiling; there is no cross-session budget.
+  The fix, if it is ever needed, is a lockfile-guarded counter — not a service.
+
+## Catalogue status
+
+Shipped enabled: `default`, `repeat-failure`, `standard-questions` — the design's
+shipping order, stopping where tools begin. Defined and disabled: `git-log`,
+`prior-art`, `constraint-drift`, `goal-drift`, `cross-task-collision`,
+`static-analysis`. Each is one `/second-brain-config` away, and none has been
+calibrated against real sessions yet, which is the point of shipping them off.
+
+## Open questions
+
+Carried from `DESIGN.md` §Open questions, unchanged by the implementation — the
+first is still the only one that decides whether this is worth having:
+
+1. Does it actually produce better outcomes? The honest test is a month of long
+   tasks and the question "would you turn it off?"
+2. How honest is self-adjudication?
+3. How often does task-boundary detection misfire?
+4. Would a detector ever need enough agentic depth to justify losing the shared
+   prefix?
+5. Should subagents be watched, or only their conclusions?
+6. How loud should collision warnings be?
+7. How wide can the fan-out go before provider rate limits bind?
+8. Does a cheap model have the judgment for this at all?
+9. What happens to a task that spans days?
