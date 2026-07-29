@@ -119,6 +119,7 @@ class Observer:
         self.gate = Gate(self.cfg, self.ledger, task_id=self.binding.task_id,
                          session_id=session_id, workspace=workspace, log=log)
         self.toolbox = Toolbox(cwd)
+        self.mcp: Any = None
         self.provider: Any = None
         self.status = Status(session_id=session_id, task_id=self.binding.task_id,
                              workspace=workspace, cwd=cwd, hosted_by=hosted_by,
@@ -151,6 +152,7 @@ class Observer:
                                      queue_timeout_s=float(self.cfg.get("gate.queue_timeout_s", 1800)))
         if dropped:
             self.log.info("discarded %d mailbox entries older than this worker", dropped)
+        await self._start_mcp()
         self.status.state = "watching"
         self.status.save()
 
@@ -164,9 +166,37 @@ class Observer:
                 self.log.exception("observer tick failed: %s", exc)
             await asyncio.sleep(float(self.cfg.get("loop.poll_interval_s", 2.0)))
 
+        if self.mcp is not None:
+            await self.mcp.close()
         self.status.state = "stopped"
         self.status.save()
         self.ledger.save(int(self.cfg.get("ledger.max_entries", 60)))
+
+    async def _start_mcp(self) -> None:
+        """Connect the configured MCP servers once, for every fork to share.
+
+        Only when something actually asks for them: a workspace with no MCP grants
+        pays nothing, and a missing SDK is reported rather than silently reducing
+        a detector's reach.
+        """
+        servers = self.cfg.get("mcp.servers") or {}
+        wanted = any(
+            (spec.get("tools") or []) and any(
+                (isinstance(t, dict) and t.get("mcp")) or
+                (isinstance(t, str) and t.startswith("mcp__"))
+                for t in spec["tools"])
+            for spec in self.cfg.group("detectors").values()
+            if isinstance(spec, dict) and spec.get("enabled")
+        )
+        if not servers or not wanted:
+            return
+        from .mcpclient import McpHub
+        self.mcp = McpHub(servers, self.log)
+        await self.mcp.start()
+        self.toolbox.mcp = self.mcp
+        self.status.mcp = self.mcp.status()
+        if not self.mcp.available:
+            self.status.note = self.mcp.reason
 
     async def _tick(self) -> None:
         self._ingest(self.reader.read())

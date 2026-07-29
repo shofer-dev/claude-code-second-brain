@@ -105,6 +105,14 @@ Defined and shipped **off**, one command each: `git-log`, `prior-art`,
 /second-brain-config set detectors.static-analysis.tools '[{"exec": ["go build ./..."]}]'
 ```
 
+A detector can also be granted an **MCP server's** tools — a whole server or one
+tool — if you configure it and the `mcp` Python SDK is installed:
+
+```
+/second-brain-config set mcp.servers '{"code-search": {"command": "my-search-mcp"}}'
+/second-brain-config set detectors.prior-art.tools '["Grep", "Glob", {"mcp": "code-search"}]'
+```
+
 ## What it costs
 
 Observing costs **zero tokens** — the projection is a deterministic function of the

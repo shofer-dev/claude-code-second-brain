@@ -107,6 +107,11 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "tokens_per_hour": 600_000,
         "max_output_tokens": 1024,
     },
+    # External tools. Servers a detector may be granted, by name; nothing is
+    # reachable that is not listed here AND granted by a detector.
+    "mcp": {
+        "servers": {},
+    },
     # Provider + model. Zero-config: the Claude Code subscription, if present.
     "model": {
         "provider": "anthropic",
@@ -270,6 +275,11 @@ SPEC: dict[str, dict[str, Any]] = {
                                "help": "Token ceiling per rolling hour."},
     "budget.max_output_tokens": {"type": _INT, "min": 64, "max": 32000,
                                  "help": "Output cap per fork request."},
+
+    "mcp.servers": {"type": _DICT,
+                    "help": "MCP servers a detector may be granted, by name: "
+                            "{\"code-search\": {\"command\": \"…\", \"args\": [...]}} or "
+                            "{\"x\": {\"url\": \"https://…\"}}."},
 
     "model.provider": {"type": _STR, "choices": ["anthropic", "openai"],
                        "help": "Wire protocol: anthropic Messages, or any OpenAI-compatible endpoint."},

@@ -1461,6 +1461,15 @@ So the drain client needs no process-ancestry join and no cwd heuristic: it read
 Monitor tool, which plugin monitors are documented to share a mechanism with; confirming it
 for a plugin-declared monitor is a one-line Phase 0 check — a monitor whose command is `env`.)*
 
+The **manifest shape is verified**, not assumed. Read out of the installed CLI,
+`monitors/monitors.json` is parsed as a *bare array* of strict objects — `name`,
+`command`, `description` required, `when` optional (`"always"` or
+`"on-skill-invoke:<skill>"`), names unique within the plugin — and `${CLAUDE_PLUGIN_ROOT}`,
+`${CLAUDE_PLUGIN_DATA}` and `${CLAUDE_PROJECT_DIR}` are substituted into the command,
+which runs in the *session's* cwd. Being wrong about this is not a small bug: the whole
+plugin's monitor load fails, and since the monitor hosts the worker, the plugin does
+nothing at all while looking installed. A test asserts the shape.
+
 The remaining caveat is **availability**: monitors are experimental, interactive-CLI-only, and
 absent on Bedrock, Google Cloud's Agent Platform and Microsoft Foundry, or when
 `DISABLE_TELEMETRY` / `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. For this plugin's
@@ -1848,7 +1857,7 @@ claude-code/second-brain/
 │   └── second_brain/        the loop, laid out along the path an observation takes:
 │       ├── transcript · projection · spool        what is seen, and how it is trimmed
 │       ├── window · ledger · task                 what is remembered, and for how long
-│       ├── detectors · fork · tools · provider · http · oauth · prompts   how a pass thinks
+│       ├── detectors · fork · tools · mcpclient · provider · http · oauth · prompts  how a pass thinks
 │       ├── gate · advice · mailbox                what may be said
 │       ├── loop · worker · spawn · index · status when any of it happens
 │       └── config · constants · paths · lock      the shared floor
@@ -1892,7 +1901,7 @@ missing.
 | 1 — plumbing, no model | **built.** Hooks, projector, spool, monitor-hosted worker, mailbox, both delivery channels, exactly-once claim |
 | 2 — the observer | **built.** Provider, append-only window with neutral compaction, task identity and ledger, trigger policy, single-flight passes, budgets, pilot-then-fan-out |
 | 3 — the gate and the feedback loop | **built.** Confidence split, semantic dedup, rate limit, staleness re-check, mute, outcome adjudication and the calibration it feeds, `/second-brain-config`, `/stats`, `/why` |
-| 4 — detectors + MCP client | **partly.** The catalogue is defined and the tool-less detectors ship enabled; **the MCP client is not implemented**, so `{"mcp": …}` grants resolve to nothing |
+| 4 — detectors + MCP client | **built.** The catalogue is defined, the tool-less detectors ship enabled, and the MCP client is a thin adapter over the official SDK — one session per server, shared across forks. The SDK is an optional dependency: without it, granted MCP tools are *absent and reported*, never silently stubbed |
 | 5 — hardening | **partly.** Ledger GC, `/second-brain-forget`, the finish gate (both halves) and the cross-task index are built; the statusline and the resumed-task digest are not |
 
 **Phase 0 — verify the mechanics.** The monitor is now load-bearing twice over — it hosts the

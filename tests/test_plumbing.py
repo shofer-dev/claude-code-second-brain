@@ -28,6 +28,50 @@ from second_brain.window import Window
 ROOT = Path(__file__).resolve().parent.parent
 
 
+# ── the manifests, against the host's actual schemas ────────────────────────
+def test_the_monitor_manifest_matches_what_the_host_parses():
+    """`monitors/monitors.json` is a bare ARRAY of strict objects.
+
+    Verified by reading the installed CLI (v2.1.220): the loader parses the file
+    with `z.array(monitorSchema)`, and the entry schema is a **strictObject** of
+    `name` / `command` / `description` (all required) plus an optional `when`. An
+    object wrapper or one extra key fails the whole plugin's monitor load — and
+    the worker is hosted by that monitor, so it fails silently and completely.
+    """
+    monitors = json.loads((ROOT / "monitors" / "monitors.json").read_text())
+    assert isinstance(monitors, list) and monitors
+    assert len({m["name"] for m in monitors}) == len(monitors)   # unique within the plugin
+    for monitor in monitors:
+        assert set(monitor) <= {"name", "command", "description", "when"}
+        assert {"name", "command", "description"} <= set(monitor)
+        assert all(monitor[k].strip() for k in ("name", "command", "description"))
+        assert monitor.get("when", "always") == "always" or \
+            monitor["when"].startswith("on-skill-invoke:")
+        # `${user_config.*}` in a monitor command is refused by the host: the
+        # substituted value would reach a shell.
+        assert "${user_config" not in monitor["command"]
+
+
+def test_hook_and_plugin_manifests_point_at_files_that_exist():
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
+    referenced = [
+        entry["command"]
+        for matchers in hooks.values() for matcher in matchers
+        for entry in matcher["hooks"]
+    ]
+    assert referenced
+    for command in referenced:
+        assert command.startswith("python3 \"${CLAUDE_PLUGIN_ROOT}/")
+        script = command.split('${CLAUDE_PLUGIN_ROOT}/')[1].split('"')[0]
+        assert (ROOT / script).exists(), script
+
+    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    assert plugin["name"] == "second-brain"
+    for command in (ROOT / "commands").glob("*.md"):
+        body = command.read_text()
+        assert "${CLAUDE_PLUGIN_ROOT}/commands/sb.py" in body
+
+
 # ── the hooks, as processes ─────────────────────────────────────────────────
 def run_hook(script: str, mode: str, payload: dict, env_extra: dict | None = None):
     env = {**os.environ, "SECOND_BRAIN_NO_SPAWN": "1"}

@@ -55,6 +55,7 @@ class Status:
     advisories_delivered: int = 0
     advisories_dropped: int = 0
     detectors: dict[str, dict[str, Any]] = field(default_factory=dict)
+    mcp: dict[str, Any] = field(default_factory=dict)
     model: str = ""
     note: str = ""
 

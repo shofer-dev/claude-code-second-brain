@@ -6,13 +6,22 @@ may imply a control or a feature that only this file knows is missing.
 ## Unverified seams (Phase 0 — do this before trusting anything below it)
 
 The monitor is load-bearing twice over: it **hosts** the worker and it **delivers**.
-Neither property is verified on a live CLI yet, and the design says nothing below
-them is worth building on unverified seams.
+Its *manifest* schema is now verified against the installed CLI; its runtime
+behaviour is not, and the design says nothing below these is worth building on
+unverified seams.
 
+- [x] **The monitor manifest schema.** Read out of the installed CLI (v2.1.220):
+      `monitors/monitors.json` is parsed as a **bare array** of `strictObject`
+      entries — `name`, `command`, `description` required, optional `when`
+      (`"always"` | `"on-skill-invoke:<skill>"`), names unique within the plugin.
+      This caught a real bug: the file was written as `{"monitors": [...]}`, which
+      fails the whole plugin's monitor load — and since the monitor hosts the
+      worker, it would have failed silently and completely. Locked in by a test.
 - [ ] A **plugin-declared** monitor receives `CLAUDE_CODE_SESSION_ID` in its
       environment. Verified for the *Monitor tool* on v2.1.220 by probing a live
-      process; the plugin-declared case is a one-line check (a monitor whose
-      command is `env`) and has not been run.
+      process, and plugin monitors are armed as Monitor tasks by the same
+      machinery — but the plugin-declared case has not itself been run
+      (a monitor whose command is `env`).
 - [ ] A plugin monitor survives for the whole session and can host a long-running
       asyncio process. **If it turns out to be short-lived, the hosting decision
       reverts** to the hook-spawned detached worker — the same code with a worse
@@ -26,12 +35,6 @@ Until these are done, treat the hook drain as the only proven channel.
 
 ## Not implemented
 
-- **MCP client.** A detector may declare `{"mcp": "server-name"}` and the grant
-  parses, but `Toolbox.mcp` is always `None`, so those tools are silently absent
-  from the fork's tool list. Nothing in the shipped catalogue needs it —
-  `prior-art` works with `Grep`/`Glob` alone — but the design's "optionally a
-  code-search MCP server" is not yet true. Wants the official `mcp` Python SDK,
-  one client session per server, shared across forks.
 - **Statusline segment.** Nothing reads the status file into a statusline yet.
 - **Resumed-task digest on `SessionStart`.** A resumed task's ledger is loaded by
   the worker but never surfaced to the primary (Phase 5 in the design).
@@ -40,6 +43,14 @@ Until these are done, treat the hook drain as the only proven channel.
   ledger's cited locators are not re-validated.
 
 ## Accepted trade-offs
+
+- **The `mcp` SDK is an optional dependency.** `mcpclient.py` is a thin adapter
+  over the official SDK — one session per server, shared across forks — but the SDK
+  is not vendored, so on a machine without it every MCP-granted tool is absent. That
+  is reported (a warning, a status field, `/second-brain-stats`) rather than
+  silently reducing a detector's reach, which is the failure mode that matters: a
+  detector answering confidently *without* the tool it asked for is worse than one
+  that does not answer. Untested against a live server.
 
 - **Transport is ours, not the official SDKs.** `DESIGN.md` §What runs the loop
   argues for the provider SDKs as typed HTTP clients. A Claude Code plugin cannot
