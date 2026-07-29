@@ -522,7 +522,7 @@ deliberate: **take the transport, own the conversation.**
 | The tool loop inside a fork | **ours**, and small | Send → if `tool_use` blocks, execute and append → repeat, until `second_brain_detector_feedback`, the iteration cap, the soft deadline, or the token budget. Perhaps fifty lines, and every one of its stopping conditions is specific to this design |
 | Built-in tools | **ours** — `Read`, `Grep`, `Glob`, path-jailed to the session's working directory, read-only | A watcher must be structurally incapable of writing. Implementing three read-only tools is cheaper than constraining a general tool system |
 | External tools | the official **`mcp` Python SDK** as a client | Protocol work is exactly what should not be hand-rolled; a per-detector allowlist decides which servers a fork may reach |
-| Structured output | the feedback **tool schema** | Providers enforce tool-input shape, so the contract is the schema; validate on receipt and retry once on mismatch |
+| Structured output | the feedback **tool schema** | Providers enforce tool-input shape, so the contract is the schema; a prose reply with no call coerces to `silent` (never to an invented finding), and the final iteration forces the call via `tool_choice` |
 | Concurrency | `asyncio` | Forks are tasks; the fan-out is `gather` with a deadline, and cancellation is what the hard timeout does (§Deadlines) |
 | Auth, zero-config | subscription OAuth where present, API key otherwise | Same posture as the provider choice: work out of the box, allow anything |
 
@@ -589,18 +589,25 @@ preconditions for *any* provider's caching, however that provider realizes them 
 `cache_control` breakpoints on Anthropic, implicit prefix matching elsewhere):
 
 ```
-[ shared system prompt + directory tree ]                 ← stable for the task's lifetime
+[ tools: the union of this pass's detector grants ]       ← byte-identical across forks
+[ shared system prompt + workspace block ]                ← stable for the task's lifetime
 [ task ledger ]                                           ← changes ONLY at a compaction
-[ observations + detector feedback since last compaction ] ← append-only
+[ observations (incl. this pass's episode) + feedback ]   ← append-only
 ──────────────────────────── cache breakpoint ────────────────────────────
-[ per-fork: detector instructions, its open advisories,   ] ← differs per fork,
-[ its time and length budget, this pass's new observations]   never cached, never shared
+[ per-fork: detector instructions, its allowed tools,     ] ← differs per fork,
+[ its open advisories, its time and length budget         ]   never cached, never shared
 ```
 
 Everything above the breakpoint is **byte-identical across every detector fork** — that is what
-makes the fan-out cheap (§Warm the cache before fanning out). Anything detector-specific placed
-above it would give each fork a different prefix and silently destroy the caching the whole
-design rests on.
+makes the fan-out cheap (§Warm the cache before fanning out). The provider's cache key is a
+byte-prefix over **tools → system → messages**, in that order, so "above the breakpoint"
+includes the request's tools array and system blocks, not just the message content: a per-fork
+tools list or a per-fork system block sits *before* the message-level breakpoint and silently
+destroys the caching the whole design rests on. That is why the wire-level tools list is the
+pass's union (per-detector access is enforced at dispatch, not by the offered list), why a
+detector's instructions ride in its private tail, and why the current episode is appended to
+the window *before* the snapshot rather than carried in the tail — in the tail, the shared
+prefix would lag one episode behind the window forever.
 
 The invariants that keep it true, stated as rules because each has a tempting violation:
 
@@ -830,11 +837,19 @@ static-analysis:
 ```
 
 **Placement, and the one constraint the cache imposes.** A detector's system prompt is exactly
-that — its own — but it is sent **after the cache breakpoint**, as a second system block (or the
-leading turn where a provider has no multi-block system), never ahead of the shared window. Put
-it first and every fork's prefix differs, every fork pays full price, and the fan-out's entire
-economics disappear (§Warm the cache before fanning out). Functionally the detector still has its
-own system prompt; structurally it is the *suffix* of one.
+that — its own — but it is sent **after the cache breakpoint**, as the head of its fork's
+private message tail, never as a system block and never ahead of the shared window. The
+provider's cache key is a byte-prefix over **tools → system → messages**, so a "second system
+block" is *not* safe placement: it sits after the system-level breakpoint but still inside the
+prefix of the message-level one, and every fork's prefix would differ from that point on. The
+same key structure is why each request's **tools array is the pass's union** of detector grants
+rather than the detector's own list — tools render first of all, so any per-fork difference
+there gives every fork a fully distinct prefix. Per-detector access survives as an
+*authorization* property: the fork's tail names the tools it may use, and dispatch re-checks
+every call against the calling detector's grant. Put any of this above the breakpoint and every
+fork pays full price, and the fan-out's entire economics disappear (§Warm the cache before
+fanning out). Functionally the detector still has its own system prompt; structurally it is the
+opening of its private tail.
 
 **Tools are per detector, explicit, and default to none.** Nothing is ambient: a detector that
 does not list `Read` cannot read, and one that lists nothing makes exactly one model call and
@@ -908,12 +923,14 @@ data, not a runtime object:
 
 ```python
 prefix = window.messages          # immutable once built (§Window discipline)
+tools  = union(d.grant for d in pass_detectors)   # ONE wire list — tools lead the cache key
 async def fork(detector):
-    msgs = prefix + [detector.suffix]     # shared by reference, private tail
+    msgs = prefix + [detector.tail]       # shared by reference; instructions + grant in the tail
     while True:                            # the ~50-line loop of §What runs the loop
-        r = await provider.send(msgs, tools=detector.tools, cache_breakpoint=len(prefix))
+        r = await provider.send(msgs, tools=tools, cache_breakpoint=len(prefix),
+                                force_tool=feedback if last_iteration else None)
         if r.feedback: return r.feedback   # second_brain_detector_feedback ends the fork
-        msgs += [r, await run_tools(r)]    # tool results stay in THIS fork
+        msgs += [r, await run_tools(r)]    # tool results stay in THIS fork; grant re-checked
 pilot = await fork(cheapest)                          # warms the provider's prefix cache
 rest  = await gather(*(fork(d) for d in others))      # then fan out
 ```
@@ -937,10 +954,14 @@ Every property the design leans on falls out of that, rather than being enforced
 #### Tools inside a fork
 
 Forking does not restrict a detector's tools — **it is what makes per-detector tool sets
-possible at all.** A model can call whatever is in the `tools=` list of *its* request, and each
-fork sends a different list. In the single-prompt alternative every lens shares one tool set, so
-`static-analysis`'s build command would be offered to `standard-questions` too; forks are how
-that stops being true.
+possible at all.** Every fork of a pass sends the **same wire-level `tools=` list** — the union
+of the pass's detector grants, because tools lead the provider's cache key and any per-fork
+difference there would give each fork its own prefix (§Warm the cache before fanning out). What
+is per-detector is the **grant**: the fork's tail states which of the offered tools it may use,
+and dispatch re-checks every call against the calling detector's grant — a call outside it is
+refused, whatever the offered list said. In the single-prompt alternative every lens would
+*reason over* one undifferentiated tool set; forks are how `static-analysis`'s build command is
+usable by `static-analysis` and refused to `standard-questions`.
 
 There is **one loop implementation, instantiated N times** — not a loop written per detector.
 The coroutine above is parameterised by the detector: system suffix, tool list, iteration cap,
@@ -953,7 +974,7 @@ What a fork's `run_tools` can dispatch to:
 |---|---|---|
 | `Read`, `Grep`, `Glob` | our own implementations, path-jailed, read-only | available to every detector; the floor |
 | Any configured **MCP server's** tools | the worker's MCP client, proxied into the fork | the worker holds one client session per server and **shares the connection** across forks — requests are independent, so concurrency is fine; what is *not* shared is any result |
-| Allowlisted **commands** (`git log`, a build) | one `Run` tool whose `command` parameter is an **enum of that detector's exact allowlisted strings**, executed in the workspace root and time-boxed | the execution risk class of §The contract; only detectors that declare them. The enum shape matters: a detector with no commands is offered no `Run` tool at all, so execution is not a capability that can be reached by phrasing |
+| Allowlisted **commands** (`git log`, a build) | one `Run` tool whose `command` parameter is an **enum of exact allowlisted strings** (the pass union's, sorted), executed in the workspace root and time-boxed | the execution risk class of §The contract. The enum is a hint, not the boundary: dispatch executes a command only when it is in the **calling detector's own** allowlist, so a fork whose detector declares no commands has every `Run` call refused even when a sibling's grant put the tool on the wire |
 
 Two enforcement details that matter more than they look:
 
@@ -1029,20 +1050,30 @@ paid for once, not once per pass — which is what makes a continuously-fed obse
 affordable.
 
 **But a cold task pays full price for its first passes**, and that is not a bug to
-fix. Providers refuse to cache a prefix below a minimum length, so until the window
-has accumulated a few thousand tokens there is nothing cacheable to mark — pass 1
-here cached nothing at a 512-token prefix, and the first write landed at pass 2.
-Two consequences worth stating rather than discovering: a task that ends after one
-or two passes never benefits from the caching at all (it is still cheap, just not
-*this* cheap), and `loop.trigger_chars` is therefore also a cache-warm-up knob —
-larger episodes cross the minimum sooner.
+fix. Providers refuse to cache a prefix below a minimum length — and the minimum is
+model-dependent and not monotonic across generations (on Anthropic it is **4096
+tokens for Haiku 4.5**, the default model, against 512–1024 on the newest Opus
+tiers) — so until the window has accumulated past it there is nothing cacheable to
+mark: pass 1 here cached nothing at a 512-token prefix, and the first write landed
+only once the prefix crossed the threshold. Two consequences worth stating rather
+than discovering: a short task can legitimately report **zero cache activity for
+its whole life** while the caching is working exactly as designed (it is still
+cheap, just not *this* cheap), and `loop.trigger_chars` is therefore also a
+cache-warm-up knob — larger episodes cross the minimum sooner. Appending the
+episode to the window *before* the snapshot (rather than carrying it in the fork
+tail) exists partly for the same reason: it keeps the cacheable prefix equal to
+the whole window instead of lagging one episode behind it.
 
 Two structural requirements follow, and both are easy to violate by accident:
 
-- **Every fork's prefix must be byte-identical.** Detector-specific instructions go *after* the
-  cache breakpoint — a second system block or the trailing turn — never woven into the shared
-  system prompt. A per-detector system prompt that precedes the window would give each fork a
-  different prefix and defeat caching entirely.
+- **Every fork's prefix must be byte-identical — and the prefix is tools → system → messages.**
+  Detector-specific instructions go in the fork's private message tail, after the cache
+  breakpoint — never in a system block (a "second system block" still precedes the
+  message-level breakpoint) and never woven into the shared system prompt. The tools array
+  leads the key, so it too must be pass-uniform: the union of the pass's grants goes on the
+  wire, and per-detector access is enforced at dispatch. Forcing the final verdict likewise
+  goes through `tool_choice` — which invalidates only the messages tier of that one request —
+  never by shrinking the tools array, which would invalidate everything.
 - **Pass cadence interacts with cache TTL.** If passes are further apart than the provider's
   cache lifetime, the pilot pays a creation every time. `loop.min_interval_s` and the cache TTL
   should be chosen together, and a longer TTL preferred where the provider offers one
@@ -1256,7 +1287,11 @@ Four parts of that flow are non-obvious and deliberate:
 - **Low confidence routes to the human *only*.** `systemMessage` is displayed to the user and
   **not** placed in the model's context, so a hunch too weak to spend the agent's attention on
   still reaches the person who can judge it, for free. The confidence floor therefore does not
-  decide *whether* the user hears about an advisory — only whether the **agent** does.
+  decide *whether* the user hears about an advisory — only whether the **agent** does. This
+  routing constrains the channel: human-only advice is **never pushed over the monitor** — a
+  monitor line is delivered to the agent as a notification, so the drain hook's
+  `systemMessage` is the only channel that can reach the person alone, and human-only
+  advisories wait in the mailbox for it.
 - **De-duplication spans dropped advice too.** Otherwise every pass regenerates the same
   observation and burns the rate limit rediscovering it.
 
@@ -1682,8 +1717,12 @@ observing everything. That should be a decision, not a surprise:
 - **Enablement is per workspace**, with a global default. In a repo the user has not opted in,
   the feed hook checks and returns before it reads a transcript — nothing about an unenrolled
   project leaves the disk, and no worker starts.
-- **`/second-brain-mute` stops observation, not just advice**, for the duration — the point of
-  muting is usually "not on this", not "keep watching silently".
+- **`/second-brain-mute` silences output, not input.** A mute stops passes and delivery — no
+  model call is made and nothing leaves the machine while it holds — but local observation
+  continues, so an unmute resumes with full context instead of a gap. Content observed during
+  a mute is therefore part of what the first pass after the unmute sends. To stop observation
+  itself, disable the workspace (`/second-brain-config set enable.default false`, or the
+  per-workspace entry in `enable.workspaces`).
 - **Everything observed leaves the machine** to the configured model provider. That is the
   plugin's function, and exactly what PRIVACY.md must say plainly, with the projection rules
   (§The observation contract) as the concrete answer to *what*.

@@ -253,7 +253,12 @@ class Detector:
         return pass_number % every == 0
 
     def suffix(self) -> str:
-        """The per-fork system block, sent after the cache breakpoint."""
+        """This detector's instructions — the head of its fork's private tail.
+
+        Never a system block and never ahead of the window: anything per-fork in
+        `tools` or `system` sits before the message-level cache breakpoint and
+        would give every fork a different prefix (see fork.py's module docstring).
+        """
         extra = ""
         questions = self.config.get("questions")
         if questions:

@@ -113,7 +113,7 @@ class AnthropicProvider:
 
     def _payload(self, system: list[dict[str, Any]], messages: list[dict[str, Any]],
                  tools: list[dict[str, Any]], max_tokens: int,
-                 cache_marks: list[tuple[int, int]]) -> dict[str, Any]:
+                 cache_marks: list[tuple[int, int]], force_tool: str) -> dict[str, Any]:
         blocks = [dict(b) for b in system]
         if blocks:
             # The shared system prompt is stable for the task's lifetime, so it is
@@ -144,12 +144,20 @@ class AnthropicProvider:
         }
         if tools:
             payload["tools"] = tools
+        if force_tool:
+            # tool_choice invalidates only the messages-tier cache; the tools and
+            # system breakpoints still hit. That is why forcing a verdict goes
+            # through tool_choice and never through shrinking the tools array,
+            # which sits at the front of the cache key and would cost everything.
+            payload["tool_choice"] = {"type": "tool", "name": force_tool}
         return payload
 
     async def send(self, system: list[dict[str, Any]], messages: list[dict[str, Any]],
                    tools: list[dict[str, Any]] | None = None, max_tokens: int = 1024,
-                   cache_marks: list[tuple[int, int]] | None = None) -> Reply:
-        payload = self._payload(system, messages, tools or [], max_tokens, cache_marks or [])
+                   cache_marks: list[tuple[int, int]] | None = None,
+                   force_tool: str = "") -> Reply:
+        payload = self._payload(system, messages, tools or [], max_tokens, cache_marks or [],
+                                force_tool)
         try:
             data = await post_json(f"{self.base_url}/v1/messages", await self._headers(),
                                    payload, timeout=self.timeout)
@@ -197,7 +205,8 @@ class OpenAIProvider:
 
     async def send(self, system: list[dict[str, Any]], messages: list[dict[str, Any]],
                    tools: list[dict[str, Any]] | None = None, max_tokens: int = 1024,
-                   cache_marks: list[tuple[int, int]] | None = None) -> Reply:
+                   cache_marks: list[tuple[int, int]] | None = None,
+                   force_tool: str = "") -> Reply:
         # `cache_marks` is deliberately ignored: this wire caches prefixes
         # implicitly, so the shared-prefix discipline still pays off — there is
         # simply nothing to declare.
@@ -212,6 +221,8 @@ class OpenAIProvider:
                     "parameters": t.get("input_schema", {}),
                 }} for t in tools
             ]
+        if force_tool:
+            payload["tool_choice"] = {"type": "function", "function": {"name": force_tool}}
         try:
             data = await post_json(f"{self.base_url}/chat/completions",
                                    {"authorization": f"Bearer {self.api_key}"},

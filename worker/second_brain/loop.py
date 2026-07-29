@@ -33,7 +33,7 @@ from . import fork as forkmod
 from . import index, mailbox, paths, spool
 from .advice import Advisory
 from .config import Config
-from .detectors import Detector, enabled as enabled_detectors, pick_pilot, resolve
+from .detectors import FEEDBACK_SCHEMA, Detector, enabled as enabled_detectors, pick_pilot, resolve
 from .fork import Feedback
 from .gate import Gate
 from .ledger import Ledger
@@ -41,7 +41,7 @@ from .projection import ERROR, META, TOOL, USER, Observation
 from .provider import Usage
 from .status import Status
 from .task import Binding, looks_like_new_goal, new_epoch, on_session_start
-from .tools import Toolbox
+from .tools import Toolbox, union_grants
 from .window import Window
 
 REQUEST_TTL_S = 300.0
@@ -445,15 +445,20 @@ class Observer:
         self.gate.revalidate(episode)
         self.gate.expire_sweep()
 
+        # The episode joins the window BEFORE the snapshot, so every fork's
+        # cacheable prefix includes this pass's input. In the tail it would sit
+        # after the breakpoint and the shared prefix would lag one episode behind
+        # the window — enough to keep a short session below the provider's
+        # minimum cacheable length for its whole life.
+        episode_chars = self.window.append_episode(episode, self.pass_number)
+
         if self.provider is None and not self._connect():
-            self.window.append_episode(episode, self.pass_number)
             return
 
         # Computed once per pass: it costs a git call and two detectors ask for it.
         structural = self._structural_evidence()
         detectors = self._due_detectors(structural)
         if not detectors:
-            self.window.append_episode(episode, self.pass_number)
             return
         if structural and any(d.structural for d in detectors):
             self.window.append_note(structural)
@@ -461,17 +466,15 @@ class Observer:
         self.status.state = "thinking"
         self.status.save()
         snapshot = self.window.snapshot()
-        episode_text = "\n".join(o.render() for o in episode) or "(no new emissions)"
         started = time.monotonic()
 
-        results = await self._fan_out(detectors, snapshot, episode_text)
+        results = await self._fan_out(detectors, snapshot, has_new=episode_chars > 0)
 
         # Only the loop writes to the window, after the fan-out returns, in
         # detector-name order — not completion order, so a replay of the same
         # session produces the same window and the next prefix is stable.
         results.sort(key=lambda f: f.detector)
         lines = [f.line(self.pass_number) for f in results]
-        self.window.append_episode(episode, self.pass_number)
         self.window.append_feedback(lines, self.pass_number)
         # The same lines the window gets, kept where a human surface can read them
         # without a running worker to ask (`/second-brain-run`, `/second-brain-why`).
@@ -517,19 +520,27 @@ class Observer:
         return out
 
     async def _fan_out(self, detectors: list[Detector], snapshot: Any,
-                       episode_text: str) -> list[Feedback]:
+                       has_new: bool) -> list[Feedback]:
         """Pilot first and alone, then the rest in parallel against a warm prefix."""
         deadline = float(self.cfg.get("loop.fork_deadline_s", 20))
         grace = float(self.cfg.get("loop.fork_grace_s", 8))
         width = int(self.cfg.get("loop.max_parallel_forks", 6))
         semaphore = asyncio.Semaphore(max(1, width))
+        # One wire-level tools list for the whole pass. Tools precede system and
+        # messages in the provider's cache key, so a per-fork tools array would
+        # give every fork a different prefix and no cache write would ever be
+        # read. Access stays per-detector: dispatch re-checks each call against
+        # the calling fork's grant, and each fork's tail names what it may use.
+        pass_tools = [*self.toolbox.definitions(union_grants(d.grant for d in detectors)),
+                      FEEDBACK_SCHEMA]
 
         async def one(detector: Detector) -> Feedback:
             async with semaphore:
                 soft = detector.deadline_s or deadline
                 return await forkmod.run_with_deadline(
                     detector, snapshot, hard_deadline_s=soft + grace,
-                    provider=self.provider, toolbox=self.toolbox, episode=episode_text,
+                    provider=self.provider, toolbox=self.toolbox,
+                    tools=pass_tools, has_new=has_new,
                     open_advice=self._open_for(detector.name), deadline_s=soft,
                     body_cap=int(self.cfg.get("gate.body_cap", 700)),
                     max_iterations=int(self.cfg.get("loop.max_fork_iterations", 6)),
@@ -692,7 +703,10 @@ class Observer:
         Only under the monitor host — a hook-spawned worker's stdout is a log file,
         so pushing there would deliver to nobody. Finish-gate advisories are left
         for the `Stop` hook unless the turn has already ended, which is the deferred
-        wake the finish gate needs.
+        wake the finish gate needs. Human-only advice is never pushed here: a
+        monitor line is delivered to the agent as a notification, and human-only
+        means it must NOT enter the model's context — the drain hook's
+        `systemMessage` is the only channel that can reach the person alone.
         """
         if self.hosted_by != "monitor":
             return
@@ -700,19 +714,16 @@ class Observer:
         advisory = mailbox.claim(
             self.session_id,
             queue_timeout_s=float(self.cfg.get("gate.queue_timeout_s", 1800)),
-            predicate=lambda a: (not a.finish_gate) or deferred_ok,
+            predicate=lambda a: (not a.human_only) and ((not a.finish_gate) or deferred_ok),
         )
         if advisory is None:
             return
         headline_cap = int(self.cfg.get("gate.headline_cap", 160))
         body_cap = int(self.cfg.get("gate.body_cap", 700))
-        if advisory.human_only:
-            text = advisory.for_user_only(headline_cap, body_cap)
-        else:
-            # One line carries both addressees: the agent's framed copy and the
-            # user-visible attribution, so they cannot diverge or arrive apart.
-            text = advisory.for_agent(headline_cap, body_cap) + "\n\n" + advisory.for_user(
-                headline_cap, body_cap)
+        # One line carries both addressees: the agent's framed copy and the
+        # user-visible attribution, so they cannot diverge or arrive apart.
+        text = advisory.for_agent(headline_cap, body_cap) + "\n\n" + advisory.for_user(
+            headline_cap, body_cap)
         self.emit(text.replace("\n", " ⏎ "))
         self._observe_delivery(advisory)
 

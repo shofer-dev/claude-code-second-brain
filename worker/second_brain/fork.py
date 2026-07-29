@@ -15,8 +15,17 @@ somewhere:
 - cancellation is task cancellation, which is what the hard deadline does.
 
 There is **one loop implementation, instantiated N times**, parameterised by the
-detector: system suffix, tool list, iteration cap, deadline, length budget. Adding
-a detector adds a config entry, never a code path.
+detector: its instructions, its grant, iteration cap, deadline, length budget.
+Adding a detector adds a config entry, never a code path.
+
+Everything detector-specific lives in the fork's private tail, because the
+provider's cache key is a byte-prefix over **tools → system → messages**: a
+per-fork system block or a per-fork tools array sits *before* the message-level
+breakpoint and would give every fork a different prefix, silently destroying the
+one-write-N-reads economics of the fan-out. So the wire-level `tools` list is the
+pass's union (built once by the loop) and the system block is the shared one only;
+which tools a detector may actually *use* is its grant — stated in its tail and
+enforced at dispatch, where every call is re-checked.
 
 The fork is told both its budgets in its own prompt rather than only having them
 enforced from outside. A model told it has eight seconds and 400 characters writes
@@ -31,7 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .constants import FEEDBACK_TOOL
-from .detectors import FEEDBACK_SCHEMA, Detector
+from .detectors import Detector
 from .provider import ProviderError, Reply, ToolCall, Usage
 from .window import Snapshot
 
@@ -81,14 +90,29 @@ class Feedback:
         return head + self.verdict + checked
 
 
-def _tail_block(detector: Detector, episode: str, open_advice: list[dict[str, Any]],
-                deadline_s: float, body_cap: int) -> dict[str, Any]:
-    """The fork's private tail: its budget, its open advisories, this pass's input."""
-    parts = [
+def _tail_block(detector: Detector, allowed: list[str], open_advice: list[dict[str, Any]],
+                deadline_s: float, body_cap: int, has_new: bool) -> dict[str, Any]:
+    """The fork's private tail: its instructions, its grant, its budget, its open advisories.
+
+    This is the ONLY place a fork differs from its siblings — everything before it
+    (tools, system, window) is byte-identical across the pass, which is what the
+    prefix cache keys on.
+    """
+    parts = [detector.suffix()]
+    if allowed:
+        parts.append(
+            "Of the tools offered, you may use only: " + ", ".join(allowed)
+            + f", plus {FEEDBACK_TOOL}. A call to any other tool will be refused."
+        )
+    else:
+        parts.append(
+            f"You have no tools this pass beyond {FEEDBACK_TOOL}; judge from the window alone."
+        )
+    parts.append(
         f"You have about {int(deadline_s)} seconds and about {body_cap} characters for your "
         f"answer. Spend the time on checking, not on writing; a headline and its evidence is "
         f"the whole shape of a good answer.",
-    ]
+    )
     if open_advice:
         rendered = "\n".join(
             f"- [{a['id']}] {a['headline']} (sent {int(time.time() - a['at'])}s ago)"
@@ -99,7 +123,10 @@ def _tail_block(detector: Detector, episode: str, open_advice: list[dict[str, An
             "afterwards and report them in `outcomes`. Evidence is required for any verdict "
             "other than no_evidence, and no_evidence is the default:\n" + rendered
         )
-    parts.append("--- new observations since the last pass ---\n" + (episode or "(nothing new)"))
+    parts.append(
+        "This pass's input is the newest observations block above." if has_new
+        else "No new observations this pass; you are being asked on schedule."
+    )
     parts.append(
         f"Answer now by calling {FEEDBACK_TOOL} exactly once. `silent` is the expected verdict."
     )
@@ -130,31 +157,40 @@ def _parse(detector: str, call: ToolCall) -> Feedback:
 
 
 async def run(detector: Detector, snapshot: Snapshot, *, provider: Any, toolbox: Any,
-              episode: str, open_advice: list[dict[str, Any]], deadline_s: float,
+              tools: list[dict[str, Any]], has_new: bool,
+              open_advice: list[dict[str, Any]], deadline_s: float,
               body_cap: int, max_iterations: int, max_output_tokens: int,
               log: Any = None) -> Feedback:
-    """Run one detector fork to its feedback call, its iteration cap, or its error."""
+    """Run one detector fork to its feedback call, its iteration cap, or its error.
+
+    `tools` is the pass-level union, identical for every fork — tools sit at the
+    front of the provider's cache key, so any per-fork difference there would give
+    each fork its own prefix and no fork would ever read another's cache write.
+    What this detector may actually call is its grant, re-checked at dispatch.
+    """
     started = time.monotonic()
-    system = [*snapshot.system, {"type": "text", "text": detector.suffix()}]
-    tail = _tail_block(detector, episode, open_advice, deadline_s, body_cap)
+    system = list(snapshot.system)                  # shared, byte-identical per pass
+    allowed = [t["name"] for t in toolbox.definitions(detector.grant)]
+    tail = _tail_block(detector, allowed, open_advice, deadline_s, body_cap, has_new)
     messages = snapshot.messages_for(tail)          # prefix shared by reference
-    tools = [*toolbox.definitions(detector.grant), FEEDBACK_SCHEMA]
     usage = Usage()
     tool_calls = 0
     checked: list[str] = []
 
     budget = max(1, max_iterations)
     for iteration in range(budget):
-        # On the last iteration the tools are taken away and only the feedback
-        # schema is offered. A tool-using detector otherwise spends its whole
-        # budget looking things up and never answers — the fork is paid for in
-        # full and returns nothing, which is the worst of both outcomes. Removing
-        # the alternatives converts that into a verdict made on what it has.
-        offered = tools if iteration < budget - 1 else [FEEDBACK_SCHEMA]
+        # On the last iteration the feedback call is forced via tool_choice. A
+        # tool-using detector otherwise spends its whole budget looking things up
+        # and never answers — the fork is paid for in full and returns nothing,
+        # which is the worst of both outcomes. tool_choice, not a shrunken tools
+        # array: changing the tools array invalidates the whole prefix cache,
+        # while tool_choice costs only the messages tier of this one request.
+        force = FEEDBACK_TOOL if iteration == budget - 1 else ""
         try:
             reply: Reply = await provider.send(
-                system=system, messages=messages, tools=offered,
+                system=system, messages=messages, tools=tools,
                 max_tokens=max_output_tokens, cache_marks=snapshot.cache_marks,
+                force_tool=force,
             )
         except ProviderError as exc:
             return Feedback(detector=detector.name, error=str(exc), usage=usage,

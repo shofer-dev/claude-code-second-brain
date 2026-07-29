@@ -120,6 +120,32 @@ def parse_grants(spec: list[Any] | None) -> ToolGrant:
     return grant
 
 
+def union_grants(grants: Any) -> ToolGrant:
+    """The pass-level union of detector grants, in a deterministic order.
+
+    One wire-identical tools list per pass is what lets every fork share one
+    cached prefix — tools precede system and messages in the provider's cache
+    key. The union widens only what is *offered*; what each fork may *use* is
+    still its own grant, re-checked at dispatch.
+    """
+    out = ToolGrant()
+    for grant in grants:
+        out.builtins |= grant.builtins
+        for command in grant.commands:
+            if command not in out.commands:
+                out.commands.append(command)
+        for server in grant.mcp_servers:
+            if server not in out.mcp_servers:
+                out.mcp_servers.append(server)
+        for tool in grant.mcp_tools:
+            if tool not in out.mcp_tools:
+                out.mcp_tools.append(tool)
+    out.commands.sort()
+    out.mcp_servers.sort()
+    out.mcp_tools.sort()
+    return out
+
+
 class Toolbox:
     """Resolves grants to tool definitions and dispatches calls, inside the jail."""
 
@@ -134,11 +160,14 @@ class Toolbox:
         if grant.commands:
             out.append({
                 "name": "Run",
-                "description": ("Run one of the commands this detector is allowed to run, in the "
-                                "workspace root. The command must be given exactly as listed."),
+                "description": ("Run one of the allowlisted commands, in the workspace root. "
+                                "The command must be given exactly as listed, and only commands "
+                                "granted to the calling detector will execute."),
                 "input_schema": {
                     "type": "object",
-                    "properties": {"command": {"type": "string", "enum": list(grant.commands)}},
+                    # Sorted so the definition is byte-stable across passes — the
+                    # tools array is the front of the provider's cache key.
+                    "properties": {"command": {"type": "string", "enum": sorted(grant.commands)}},
                     "required": ["command"],
                 },
             })

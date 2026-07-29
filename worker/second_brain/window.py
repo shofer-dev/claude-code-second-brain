@@ -14,8 +14,10 @@ has a tempting violation, and they are enforced here:
 - **New knowledge is never folded back into the prefix between compactions.**
   Detector feedback and advice outcomes are appended as ordinary blocks; they
   reach the ledger only at the next compaction.
-- **Volatile content lives only in the trailing per-fork block**, which this class
-  never holds — a fork appends it to its own private copy.
+- **Per-fork content lives only in the trailing tail block**, which this class
+  never holds — a fork appends it to its own private copy. The current episode is
+  NOT per-fork: the loop appends it here before the snapshot, so the cacheable
+  prefix includes this pass's input rather than lagging one episode behind.
 - **Compaction is the one sanctioned prefix rebuild**, amortized with hysteresis:
   triggered at a high-water mark, compacted down to a *floor*. Compacting back to
   the trigger would re-compact on the very next observation and thrash the cache
