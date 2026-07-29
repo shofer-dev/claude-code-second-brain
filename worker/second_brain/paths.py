@@ -147,6 +147,11 @@ def offset_path(session_id: str) -> Path:
     return data_dir() / "offsets" / f"{safe_name(session_id)}.json"
 
 
+def spool_offset_path(session_id: str) -> Path:
+    """How far the worker has consumed the spool — durable across a restart."""
+    return data_dir() / "offsets" / f"{safe_name(session_id)}.spool.json"
+
+
 def session_state_path(session_id: str) -> Path:
     """Session → task binding, plus the worker lockfile's neighbours."""
     return data_dir() / "state" / f"{safe_name(session_id)}.json"

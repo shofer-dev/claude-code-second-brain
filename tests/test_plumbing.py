@@ -427,3 +427,26 @@ def test_muting_is_readable_without_a_worker():
                         json.dumps({"detectors": {"default": time.time() + 600}}))
     assert "default" in Mute("t-1", "/w").muted("default")
     assert Mute("t-1", "/w").muted("git-log") == ""
+
+
+def test_the_spool_offset_survives_a_worker_restart():
+    """A restarted worker must not re-read the session it already consumed.
+
+    The spool outlives the worker, so an in-memory offset means a crash replays
+    everything: duplicate observations in a fresh window, one enormous episode, and
+    the whole bill paid again at the moment nothing is cached.
+    """
+    feed = [Observation(kind=TEXT, body="first thing"), Observation(kind=TEXT, body="second")]
+    spool.append("s-restart", feed)
+    assert len(spool.SpoolReader("s-restart").read()) == 2
+
+    restarted = spool.SpoolReader("s-restart")          # a new process would do this
+    assert restarted.read() == []
+
+    spool.append("s-restart", [Observation(kind=TEXT, body="after the restart")])
+    assert [o.body for o in spool.SpoolReader("s-restart").read()] == ["after the restart"]
+
+
+def test_starting_at_the_end_ignores_a_stored_offset():
+    spool.append("s-end", [Observation(kind=TEXT, body="backlog")])
+    assert spool.SpoolReader("s-end", start_at_end=True).read() == []

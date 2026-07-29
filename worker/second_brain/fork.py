@@ -143,10 +143,17 @@ async def run(detector: Detector, snapshot: Snapshot, *, provider: Any, toolbox:
     tool_calls = 0
     checked: list[str] = []
 
-    for _ in range(max(1, max_iterations)):
+    budget = max(1, max_iterations)
+    for iteration in range(budget):
+        # On the last iteration the tools are taken away and only the feedback
+        # schema is offered. A tool-using detector otherwise spends its whole
+        # budget looking things up and never answers — the fork is paid for in
+        # full and returns nothing, which is the worst of both outcomes. Removing
+        # the alternatives converts that into a verdict made on what it has.
+        offered = tools if iteration < budget - 1 else [FEEDBACK_SCHEMA]
         try:
             reply: Reply = await provider.send(
-                system=system, messages=messages, tools=tools,
+                system=system, messages=messages, tools=offered,
                 max_tokens=max_output_tokens, cache_marks=snapshot.cache_marks,
             )
         except ProviderError as exc:

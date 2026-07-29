@@ -24,16 +24,23 @@ from second_brain.window import Window
 class FakeProvider:
     """Records every request and replies from a script."""
 
-    def __init__(self, script=None):
+    def __init__(self, script=None, honor_tools=True):
         self.requests: list[dict] = []
         self.script = script or {}
         self.delay = 0.0
+        # Real models can only call what they were offered. One test deliberately
+        # simulates a model naming a tool it never got, to prove dispatch re-checks.
+        self.honor_tools = honor_tools
 
     async def send(self, system, messages, tools=None, max_tokens=1024, cache_marks=None):
         self.requests.append({"system": system, "messages": messages, "tools": tools,
                               "cache_marks": cache_marks})
         if self.delay:
             await asyncio.sleep(self.delay)
+        if self.honor_tools and tools and len(tools) == 1 and tools[0]["name"] == FEEDBACK_TOOL:
+            # A model can only call what it was offered: once the alternatives are
+            # withdrawn, the fake answers rather than reaching for a missing tool.
+            return _silent()
         detector = system[-1]["text"].split("'")[1] if "'" in system[-1]["text"] else "?"
         replies = self.script.get(detector) or self.script.get("*") or [_silent()]
         index = min(len([r for r in self.requests
@@ -125,7 +132,7 @@ def test_a_forks_tool_results_stay_inside_that_fork(window, tmp_path):
 # ── the grant is the boundary, and it is re-checked ─────────────────────────
 def test_a_detector_without_a_grant_cannot_read(window, tmp_path):
     (tmp_path / "secret.txt").write_text("nope")
-    provider = FakeProvider({"*": _tool_then_silent()})
+    provider = FakeProvider({"*": _tool_then_silent()}, honor_tools=False)
     asyncio.run(run(detector(tools=[]), window.snapshot(), provider=provider,
                     toolbox=Toolbox(tmp_path), episode="x", open_advice=[], deadline_s=5,
                     body_cap=400, max_iterations=3, max_output_tokens=256))
@@ -201,3 +208,27 @@ def test_feedback_lines_are_compact_and_stable():
     line = Feedback(detector="git-log", verdict="silent", checked=["3 commits"]).line(14)
     assert line.startswith("[pass 14")
     assert "git-log → silent (checked: 3 commits)" in line
+
+
+def test_the_last_iteration_takes_the_tools_away_so_the_fork_must_answer(window, tmp_path):
+    """A tool-using detector that never calls the feedback tool is a wasted fork.
+
+    Observed live: `default` spent all six model calls on Read/Grep and returned
+    nothing, so the pass paid for a fork and got silence with an error attached.
+    On the final iteration the alternatives are removed and only the feedback
+    schema is offered, which turns that into a verdict made on what it has.
+    """
+    (tmp_path / "a.txt").write_text("contents")
+    greedy = [Reply(tool_calls=[ToolCall(id=f"c{i}", name="Read", input={"file_path": "a.txt"})],
+                    usage=Usage(input_tokens=5, output_tokens=5)) for i in range(5)]
+    greedy.append(_silent())            # what it does once Read is no longer offered
+    provider = FakeProvider({"*": greedy})
+
+    feedback = asyncio.run(run(detector(tools=["Read"]), window.snapshot(), provider=provider,
+                               toolbox=Toolbox(tmp_path), episode="x", open_advice=[],
+                               deadline_s=5, body_cap=400, max_iterations=3,
+                               max_output_tokens=256))
+    offered = [[t["name"] for t in r["tools"]] for r in provider.requests]
+    assert "Read" in offered[0]                      # early: it may look things up
+    assert offered[-1] == [FEEDBACK_TOOL]            # last: it must answer
+    assert feedback.verdict == "silent" and feedback.error == ""
