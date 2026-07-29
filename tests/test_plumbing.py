@@ -450,3 +450,75 @@ def test_the_spool_offset_survives_a_worker_restart():
 def test_starting_at_the_end_ignores_a_stored_offset():
     spool.append("s-end", [Observation(kind=TEXT, body="backlog")])
     assert spool.SpoolReader("s-end", start_at_end=True).read() == []
+
+
+# ── pricing and the observer/primary ratio ──────────────────────────────────
+def test_prices_are_per_million_tokens_with_cache_multipliers():
+    from second_brain import pricing
+
+    cost = pricing.estimate("claude-haiku-4-5", {
+        "input": 1_000_000, "output": 1_000_000,
+        "cache_write": 1_000_000, "cache_read": 1_000_000,
+    })
+    assert cost.known
+    assert cost.input == pytest.approx(1.00)          # Haiku 4.5 input rate
+    assert cost.output == pytest.approx(5.00)
+    assert cost.cache_write == pytest.approx(1.25)    # 1.25x input at the 5m TTL
+    assert cost.cache_read == pytest.approx(0.10)     # 0.1x input
+    assert cost.total == pytest.approx(7.35)
+
+
+def test_the_one_hour_cache_ttl_costs_more_to_write():
+    from second_brain import pricing
+    at_1h = pricing.estimate("claude-haiku-4-5", {"cache_write": 1_000_000}, cache_ttl="1h")
+    assert at_1h.cache_write == pytest.approx(2.00)   # 2x input, not 1.25x
+
+
+def test_an_unknown_model_is_reported_unpriced_rather_than_guessed():
+    from second_brain import pricing
+    unknown = pricing.estimate("some-local-model", {"input": 1_000_000})
+    assert unknown.known is False and unknown.total == 0.0
+    assert "not in the rate table" in unknown.render()
+
+    priced = pricing.estimate("some-local-model", {"input": 1_000_000},
+                              override_in=0.5, override_out=1.0)
+    assert priced.known and priced.input == pytest.approx(0.5)
+
+
+def test_a_dated_snapshot_prices_as_its_base_model():
+    from second_brain import pricing
+    assert pricing.rates("claude-haiku-4-5-20251001") == pricing.rates("claude-haiku-4-5")
+
+
+def test_one_pass_is_not_a_rate():
+    """The first pass runs cold and often carries a larger episode.
+
+    Extrapolating an hourly cost from it reports several times the steady state —
+    observed live at $1.07/hour from a single backfill pass.
+    """
+    from second_brain import pricing
+    assert pricing.per_hour(0.19, elapsed_s=600, passes=1) is None   # too few passes
+    assert pricing.per_hour(0.19, elapsed_s=60, passes=9) is None    # too little time
+    assert pricing.per_hour(0.10, elapsed_s=3600, passes=9) == pytest.approx(0.10)
+
+
+def test_primary_usage_is_summed_from_the_transcript(tmp_path, monkeypatch):
+    """The observer/primary ratio is measured, not asserted — this is the measurement."""
+    projects = tmp_path / ".claude" / "projects" / "-some-repo"
+    projects.mkdir(parents=True)
+    path = projects / "s-usage.jsonl"
+    with path.open("w", encoding="utf-8") as fh:
+        for record in [
+            {"type": "assistant", "message": {"usage": {
+                "input_tokens": 10, "output_tokens": 5,
+                "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 100}}},
+            {"type": "assistant", "message": {"usage": {
+                "input_tokens": 20, "output_tokens": 7, "cache_read_input_tokens": 2000}}},
+            {"type": "user", "message": {"content": "no usage on this one"}},
+        ]:
+            fh.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    totals = transcript.primary_usage("s-usage")
+    assert totals == {"input": 30, "output": 12, "cache_read": 3000, "cache_write": 100}
+    assert transcript.primary_usage("no-such-session") == {}

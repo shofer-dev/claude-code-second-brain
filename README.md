@@ -78,6 +78,7 @@ is still worth a person's glance, and it is free.
 | Command | What it shows or does |
 |---|---|
 | `/second-brain-stats` | Observed vs dropped volume per tool, pass latency, window fill, token use and budget headroom, advisories generated / gated / delivered, and **uptake per detector** |
+| `/second-brain-run` | **Ask it to look now** — catches up from the transcript, runs one pass, prints every detector's verdict and any advisory. Bypasses the pass throttle, not the mute or the budget. The fastest way to see it work |
 | `/second-brain-why` | The recent advisories with their evidence and adjudicated verdicts — **and the ones the gate dropped, with the reason** |
 | `/second-brain-config` | Every threshold, cap and interval, with the layer each value came from; `set` validates before writing and running workers pick it up at the next pass boundary |
 | `/second-brain-mute` | Silence everything, this workspace, or one detector, optionally for a duration. Muting everything stops **observation**, not just advice |
@@ -123,7 +124,11 @@ speaks). They are deliberately separate: making it think more often does not mak
 it chattier, and quietening it does not blind it.
 
 `/second-brain-stats` reports both as measured rates beside their configured
-ceilings, so you can see which limit is actually binding.
+ceilings, so you can see which limit is actually binding — plus the **cost in
+money** (priced per model, with cache reads at 0.1× and writes at 1.25×) and the
+**measured observer-to-primary token ratio**, read from the primary's own `usage`
+in the transcript rather than quoted from this README. In a real session that
+ratio has run at **0.07 %**.
 
 ## Safety properties
 

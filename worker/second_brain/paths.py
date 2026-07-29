@@ -192,6 +192,16 @@ def finish_gate_path(task_id: str) -> Path:
     return data_dir() / "finish-gate" / f"{safe_name(task_id)}.json"
 
 
+def trigger_path(session_id: str) -> Path:
+    """A human asking for a pass now, out of band (`/second-brain-run`).
+
+    A file rather than a signal: the worker is already polling, nothing needs to
+    listen, and a request that arrives while no worker runs simply waits on disk
+    instead of being lost.
+    """
+    return data_dir() / "control" / f"{safe_name(session_id)}.run"
+
+
 def control_path(task_id: str) -> Path:
     """Mutes and other user controls the worker re-reads each pass."""
     return data_dir() / "control" / f"{safe_name(task_id)}.json"

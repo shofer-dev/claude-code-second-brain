@@ -96,3 +96,43 @@ def seek_to_end(transcript_path: str | Path, session_id: str) -> None:
     except OSError:
         size = 0
     Cursor(offset=size, size=size).save(session_id)
+
+
+def find(session_id: str) -> Path | None:
+    """Locate a session's transcript by id, wherever Claude Code filed it."""
+    root = Path.home() / ".claude" / "projects"
+    try:
+        return next(root.glob(f"*/{session_id}.jsonl"), None)
+    except OSError:
+        return None
+
+
+def primary_usage(session_id: str) -> dict[str, int]:
+    """Sum the PRIMARY's own token usage for this session.
+
+    The design promises `/second-brain-stats` reports the measured observer/primary
+    ratio rather than a number this document guessed — and it can, because the
+    primary's `usage` is right there in the transcript on every assistant record.
+    Reading it costs one local file scan and nothing else.
+    """
+    path = find(session_id)
+    if path is None:
+        return {}
+    totals = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"usage"' not in line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                usage = (record.get("message") or {}).get("usage") or {}
+                totals["input"] += int(usage.get("input_tokens", 0) or 0)
+                totals["output"] += int(usage.get("output_tokens", 0) or 0)
+                totals["cache_read"] += int(usage.get("cache_read_input_tokens", 0) or 0)
+                totals["cache_write"] += int(usage.get("cache_creation_input_tokens", 0) or 0)
+    except OSError:
+        return {}
+    return totals

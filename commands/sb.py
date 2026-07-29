@@ -9,7 +9,7 @@ instead of pretending to be live (DESIGN.md §Human surfaces).
 
 Everything printed here is for the human. None of it enters the model's context.
 
-Usage: sb.py <stats|why|config|mute|unmute|forget> [args…]
+Usage: sb.py <stats|why|run|config|mute|unmute|forget> [args…]
 """
 from __future__ import annotations
 
@@ -46,6 +46,49 @@ def _age(ts: float) -> str:
     if delta < 3600:
         return f"{delta // 60}m ago"
     return f"{delta // 3600}h{(delta % 3600) // 60:02d}m ago"
+
+
+def _print_cost(record: dict[str, object], tokens: dict[str, object], workspace: str) -> None:
+    """Money, a run rate, and the observer/primary ratio the design promises.
+
+    The ratio is measured, not asserted: the primary's own `usage` is on every
+    assistant record in the transcript, so both halves come from real numbers
+    rather than from a figure this plugin's docs quoted once.
+    """
+    from second_brain import pricing, transcript
+
+    cfg = Config.load(workspace)
+    model = str(record.get("model") or cfg.get("model.name"))
+    cost = pricing.estimate(
+        model, {k: int(v or 0) for k, v in tokens.items()},
+        cache_ttl=str(cfg.get("model.cache_ttl", "5m")),
+        override_in=float(cfg.get("model.price_in", 0.0) or 0.0),
+        override_out=float(cfg.get("model.price_out", 0.0) or 0.0),
+    )
+    print(f"\n   cost so far: {cost.render()}")
+    if not cost.known:
+        print("     set model.price_in / model.price_out to price this model")
+
+    elapsed = time.time() - float(record.get("started_at", 0) or 0)
+    passes = int(record.get("passes", 0) or 0)
+    rate = pricing.per_hour(cost.total, elapsed, passes) if cost.known else None
+    if rate is not None:
+        print(f"   run rate: ~${rate:.3f}/hour at the observed pass cadence "
+              f"(~${rate * 8:.2f} over an 8-hour session)")
+    elif cost.known:
+        reason = ("only one pass so far — the first is atypical (cold cache, larger "
+                  "episode), so a rate from it would mislead"
+                  if passes < 2 else "too little elapsed time to extrapolate honestly")
+        print(f"   run rate: not yet — {reason}")
+
+    primary = transcript.primary_usage(str(record.get("session_id", "")))
+    if primary:
+        primary_total = sum(primary.values())
+        observer_total = sum(int(v or 0) for v in tokens.values())
+        share = (observer_total / primary_total * 100) if primary_total else 0.0
+        print(f"\n   observer vs primary: {observer_total:,} tokens against the primary's "
+              f"{primary_total:,} ({share:.2f}%)")
+        print("     — the primary's figure is dominated by cache reads; both are input-side totals.")
 
 
 # ── stats ───────────────────────────────────────────────────────────────────
@@ -92,6 +135,7 @@ def cmd_stats(argv: list[str]) -> int:
           f"cache read {tokens.get('cache_read', 0):,} · cache write {tokens.get('cache_write', 0):,}")
     print(f"   budget: {int(record.get('budget_task_used', 0)):,} this task · "
           f"{int(record.get('budget_hour_used', 0)):,} this hour")
+    _print_cost(record, tokens, workspace)
 
     print(f"\n   advisories: {record.get('advisories_generated', 0)} generated · "
           f"{record.get('advisories_delivered', 0)} delivered · "
@@ -116,6 +160,70 @@ def cmd_stats(argv: list[str]) -> int:
         print(f"\n   note: {record['note']}")
     print("\n   Silence is the success metric: a chatty Second Brain is a broken one.")
     return 0
+
+
+# ── run ─────────────────────────────────────────────────────────────────────
+def cmd_run(argv: list[str]) -> int:
+    """Ask for a pass now, and wait for its answer.
+
+    This is a *human* surface, not a tool: the design's non-goal is giving the
+    **agent** something to call (that shape is a Q&A tool — it costs tool budget
+    and invites exactly the synchronous interaction the plugin avoids). A person
+    saying "look now" costs the agent nothing and is how you test the thing.
+
+    It bypasses the two limits that exist to pace cost — the clock floor and the
+    volume threshold — and bypasses neither of the ones that mean something: a mute
+    still silences it, and an exhausted budget still degrades to silence.
+    """
+    from second_brain import spool, transcript
+    from second_brain.projection import project_records
+
+    workspace = _workspace(argv)
+    record = _current(workspace)
+    if record is None:
+        print("🧠 Second Brain — no worker is watching this workspace.")
+        print("   Install the plugin and restart the session, then try again.")
+        return 1
+
+    session_id = str(record.get("session_id", ""))
+    cfg = Config.load(workspace)
+    before = int(record.get("passes", 0) or 0)
+
+    # Catch the spool up first: hooks may not have fired (they do not arm in a
+    # session that was already running when the plugin was installed), and a pass
+    # over nothing new is a pass wasted.
+    found = transcript.find(session_id)
+    fed = 0
+    if found is not None:
+        new_records = transcript.read_new_records(found, session_id)
+        observations = project_records(new_records, cfg.group("projection"))
+        fed = spool.append(session_id, observations)
+    print(f"🧠 Second Brain — requesting a pass for task {record.get('task_id')}")
+    print(f"   fed {fed:,} new characters from the transcript" if fed
+          else "   no new observations since the last read — passing over what is already spooled")
+
+    paths.write_private(paths.trigger_path(session_id), json.dumps({"at": time.time()}))
+
+    timeout = 120.0
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(2.0)
+        fresh = status.read(session_id) or {}
+        if int(fresh.get("passes", 0) or 0) > before:
+            print(f"   pass {fresh.get('passes')} completed in {fresh.get('last_pass_s')}s\n")
+            for line in fresh.get("last_feedback") or []:
+                print(f"   {line}")
+            pending = mailbox.peek(session_id)
+            if pending:
+                print("\n   advisory queued for delivery:")
+                for advisory in pending:
+                    print("   " + advisory.for_user().replace("\n", "\n   "))
+            else:
+                print("\n   no advisory — silence is the expected steady state.")
+            return 0
+    print(f"   no pass completed within {int(timeout)}s. Check `/second-brain-stats`: the worker may "
+          f"be muted, out of budget, or not running.")
+    return 1
 
 
 # ── why ─────────────────────────────────────────────────────────────────────
@@ -291,6 +399,8 @@ def main(argv: list[str]) -> int:
     rest = argv[1:]
     if command == "stats":
         return cmd_stats(rest)
+    if command == "run":
+        return cmd_run(rest)
     if command == "why":
         return cmd_why(rest)
     if command == "config":

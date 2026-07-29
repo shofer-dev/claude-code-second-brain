@@ -119,6 +119,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "base_url": "",
         "cache_ttl": "5m",
         "request_timeout_s": 120,
+        "price_in": 0.0,
+        "price_out": 0.0,
     },
     # Whether we observe at all, and where.
     "enable": {
@@ -289,6 +291,10 @@ SPEC: dict[str, dict[str, Any]] = {
                         "help": "Prefix cache lifetime; choose together with loop.min_interval_s."},
     "model.request_timeout_s": {"type": _INT, "min": 5, "max": 900,
                                 "help": "HTTP timeout for one provider request."},
+    "model.price_in": {"type": _FLOAT, "min": 0.0, "max": 1000.0,
+                       "help": "Input $/Mtok for a model the built-in rate table does not know (0 = use the table)."},
+    "model.price_out": {"type": _FLOAT, "min": 0.0, "max": 1000.0,
+                        "help": "Output $/Mtok for a model the rate table does not know (0 = use the table)."},
 
     "enable.default": {"type": _BOOL, "help": "Observe workspaces that have made no explicit choice."},
     "enable.workspaces": {"type": _DICT, "help": "Per-workspace opt-in/opt-out, keyed by absolute path."},

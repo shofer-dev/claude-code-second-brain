@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from . import fork as forkmod
-from . import index, mailbox, spool
+from . import index, mailbox, paths, spool
 from .advice import Advisory
 from .config import Config
 from .detectors import Detector, enabled as enabled_detectors, pick_pilot, resolve
@@ -137,6 +137,7 @@ class Observer:
         self.touched: list[str] = []
         self.budget = Budget()
         self.turn_stopped = False
+        self.forced = False
         self.background: dict[str, float] = {}
         self.finished = False
         self.last_index_publish = 0.0
@@ -348,7 +349,23 @@ class Observer:
             self.log.info("coalesced episode: dropped %d low-salience observations", dropped)
 
     # ── trigger policy ──────────────────────────────────────────────────────
+    def _requested(self) -> bool:
+        """Did a human ask for a pass now? Consumed on read, so it fires once."""
+        path = paths.trigger_path(self.session_id)
+        try:
+            path.unlink()
+            return True
+        except OSError:
+            return False
+
     def _pass_due(self) -> bool:
+        # An explicit request bypasses the clock floor and the volume threshold —
+        # it is the one trigger a person controls, and making them wait out
+        # `min_interval_s` would defeat the point of asking. It does not bypass the
+        # mute or the budget, which are the limits that mean something.
+        if self._requested():
+            self.forced = True
+            return True
         if not self.episode:
             return False
         now = time.time()
@@ -371,7 +388,8 @@ class Observer:
         self.cfg = Config.load(self.workspace)          # picked up at a pass boundary
         self.last_pass_start = time.time()
         self.pass_number += 1
-        trigger = self.salience_pending or "volume"
+        trigger = "requested" if self.forced else (self.salience_pending or "volume")
+        self.forced = False
         self.salience_pending = ""
         episode, self.episode = self.episode, []
         self.pending_chars = 0
@@ -406,8 +424,12 @@ class Observer:
         # detector-name order — not completion order, so a replay of the same
         # session produces the same window and the next prefix is stable.
         results.sort(key=lambda f: f.detector)
+        lines = [f.line(self.pass_number) for f in results]
         self.window.append_episode(episode, self.pass_number)
-        self.window.append_feedback([f.line(self.pass_number) for f in results], self.pass_number)
+        self.window.append_feedback(lines, self.pass_number)
+        # The same lines the window gets, kept where a human surface can read them
+        # without a running worker to ask (`/second-brain-run`, `/second-brain-why`).
+        self.status.last_feedback = lines
 
         self._absorb(results, trigger)
         if self.window.needs_compaction():

@@ -1760,8 +1760,9 @@ needs a live session, and §Did it land? is what measures that.
 | Ledger GC'd while dormant | The task rebuilds from its next observations — a ledger is derived state, never a source of truth. |
 
 **Non-goals**, stated so they are not re-litigated: no edits, no repo writes, no user Q&A, no
-blocking or vetoing, no permission decisions, no on-demand "ask the second brain" tool (that
-shape belongs to a Q&A tool, not to a watcher), and no attempt to be right often — only to be
+blocking or vetoing, no permission decisions, no on-demand "ask the second brain" tool **for the
+agent** (that shape belongs to a Q&A tool, not to a watcher — a human-invoked
+`/second-brain-run` is a different thing and does ship), and no attempt to be right often — only to be
 right *cheaply* and quiet otherwise.
 
 ---
@@ -1772,8 +1773,21 @@ The human sees **every advisory the agent sees**, verbatim, as it lands (§Say i
 plus everything below, which is deliberately kept out of the model's context:
 
 - **`/second-brain-stats`** — observed vs dropped volume per tool, observer/primary token
-  ratio (measured), advisories generated / gated / delivered, **uptake rate per detector**,
-  window fill, cost, budget headroom, pass latency, ledger count and age.
+  ratio (measured from the primary's own `usage` in the transcript), advisories
+  generated / gated / delivered, **uptake rate per detector**, window fill, **cost in
+  money** (per-model rates, cache reads at 0.1× and writes at 1.25×/2×) with an
+  hourly run rate — refused rather than extrapolated from a single pass, since the
+  first pass runs cold and would mislead — budget headroom, pass latency, ledger
+  count and age.
+- **`/second-brain-run`** — ask for a pass *now*: catch the spool up from the
+  transcript, run one pass immediately, and print each detector's verdict plus any
+  advisory. It bypasses the two limits that pace **cost** (the clock floor and the
+  volume threshold) and neither of the ones that mean something — a mute still
+  silences it, an exhausted budget still degrades to silence. This is not the
+  rejected "ask the second brain" shape: that non-goal is about giving the *agent*
+  a tool, which would cost tool budget and invite the synchronous interaction this
+  design avoids. A person saying "look now" costs the agent nothing, and it is how
+  the thing gets tested.
 - **`/second-brain-why`** — the last advisories with their evidence chains **and their
   adjudicated verdicts**, plus the last few that were *gated*, with the reason. The gate's
   decisions must be inspectable or nobody will trust the channel.
