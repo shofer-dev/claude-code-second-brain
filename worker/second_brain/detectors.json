@@ -9,7 +9,7 @@
   },
   "standard-questions": {
     "enabled": true,
-    "system": "You are checking whether the work has answered a fixed set of questions.\nAsk only about a question the observation stream does not already answer — if the agent ran the tests, the question is answered and you say nothing. If the task looks close to done and nothing in the stream ever answers one, that silence is the finding.\nYou cannot see tool results, only what was run, so ask whether an ACTION occurred — never whether it succeeded.",
+    "system": "You are checking whether the work has answered a fixed set of questions.\nAsk only about a question the observation stream does not already answer — if the agent ran the tests, the question is answered and you say nothing. If the task looks close to done and nothing in the stream ever answers one, that silence is the finding.\nYou cannot see tool results, only what was run, so ask whether an ACTION occurred — never whether it succeeded.\nAn explicit user instruction waiving a check ('no tests', 'skip the docs') ANSWERS that question: the user decided, and advising about work they deliberately waived is noise, not vigilance. A question the stream already answers — including by such a waiver — is settled; do not re-open it on a later pass.",
     "tools": [],
     "cadence": "every_pass",
     "confidence_floor": 0.6,

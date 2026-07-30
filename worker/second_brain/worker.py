@@ -19,6 +19,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,27 @@ async def _run(observer: Observer, log: logging.Logger) -> None:
     stop_task.cancel()
 
 
+def standby_for_lock(sid: str, log: logging.Logger, interval_s: float = 30.0) -> Any:
+    """A monitor that lost the session-lock race does NOT exit — it stands by.
+
+    Exiting ends the monitor's stream, which the harness announces to the
+    session — observed live costing the primary a whole turn of investigating
+    our own plumbing — and it would leave the session without a push channel
+    for its entire life, since only a monitor-hosted worker can write a
+    notification. Standing by is silent and free: poll the lock, and take over
+    hosting the moment the incumbent worker dies. The harness kills this
+    process with the session, so the loop needs no exit of its own.
+    """
+    log.info("monitor standing by: another worker holds session %s; "
+             "will take over if it exits", sid)
+    while True:
+        time.sleep(max(0.05, interval_s))
+        lock = held(paths.lock_path(sid))
+        if lock is not None:
+            log.info("standby monitor taking over session %s", sid)
+            return lock
+
+
 def main() -> int:
     log = setup_logging()
     sid = session_id()
@@ -100,22 +122,32 @@ def main() -> int:
         log.warning("no session id in the environment; nothing to watch")
         return 0
 
+    hosted_by = os.environ.get("SECOND_BRAIN_HOSTED_BY", "monitor")
     lock = held(paths.lock_path(sid))
     if lock is None:
-        log.info("another worker already holds session %s; exiting", sid)
-        return 0
+        if hosted_by != "monitor":
+            log.info("another worker already holds session %s; exiting", sid)
+            return 0
+        lock = standby_for_lock(
+            sid, log, float(os.environ.get("SECOND_BRAIN_STANDBY_POLL_S", "30")))
 
     cwd = working_dir()
     workspace = paths.workspace_key(cwd)
     cfg = Config.load(workspace)
-    if not cfg.observing(workspace):
-        # Enrolment is a decision, not a surprise: an unenrolled workspace gets no
-        # worker at all, not a silent one.
-        log.info("workspace %s is not enrolled; exiting", workspace)
-        lock.close()
-        return 0
-
-    hosted_by = os.environ.get("SECOND_BRAIN_HOSTED_BY", "monitor")
+    if not cfg.observing(workspace) and hosted_by == "monitor":
+        log.info("workspace %s is not enrolled; monitor waiting dormant for enrolment", workspace)
+    while not cfg.observing(workspace):
+        # Enrolment is a decision, not a surprise: an unenrolled workspace gets
+        # no OBSERVING worker. A hook-spawned process exits; a monitor waits
+        # dormant instead — exiting would end its stream (the same noisy
+        # notification the standby above avoids), and waiting means a live
+        # enrolment flip is picked up without a session restart.
+        if hosted_by != "monitor":
+            log.info("workspace %s is not enrolled; exiting", workspace)
+            lock.close()
+            return 0
+        time.sleep(float(os.environ.get("SECOND_BRAIN_STANDBY_POLL_S", "30")) * 2)
+        cfg = Config.load(workspace)
     observer = Observer(sid, cwd, workspace, emit=make_emitter(hosted_by, log),
                         log=log, hosted_by=hosted_by)
     try:

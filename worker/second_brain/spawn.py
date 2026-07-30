@@ -16,10 +16,22 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import paths
 from .lock import held
+
+GRACE_S = 15.0
+"""How long hook spawning defers to the monitor at session start.
+
+The monitor is the strictly better host — it owns the push channel — but it
+takes a couple of seconds to boot while the first hook event fires immediately.
+Spawning inside that window used to win the lock race and cost the session its
+push channel (the losing monitor now stands by, but the incumbent hook worker
+would hold the lock for the session's life). Where monitors never come (headless
+platforms), the only cost is the first worker starting this much later, with the
+spool buffering everything in the meantime."""
 
 
 def worker_running(session_id: str) -> bool:
@@ -29,6 +41,27 @@ def worker_running(session_id: str) -> bool:
         return True
     handle.close()          # releasing immediately: we only asked, we do not want it
     return False
+
+
+def grace_pending(session_id: str) -> bool:
+    """True while the monitor's head start is still running for this session.
+
+    The first hook event stamps a first-seen marker and declines to spawn;
+    spawning resumes once the marker is older than `GRACE_S`. A worker that
+    dies mid-session is respawned immediately — its marker is long past grace.
+    """
+    grace = float(os.environ.get("SECOND_BRAIN_SPAWN_GRACE_S", GRACE_S))
+    if grace <= 0:
+        return False
+    marker = paths.data_dir() / "state" / f"{paths.safe_name(session_id)}.first-seen"
+    try:
+        return time.time() - marker.stat().st_mtime < grace
+    except OSError:
+        try:
+            paths.write_private(marker, str(time.time()))
+        except OSError:
+            pass
+        return True
 
 
 def ensure_worker(session_id: str, cwd: str, transcript_path: str) -> bool:
@@ -42,6 +75,8 @@ def ensure_worker(session_id: str, cwd: str, transcript_path: str) -> bool:
         # harness and by anyone who wants the feed without the observer.
         return False
     if worker_running(session_id):
+        return False
+    if grace_pending(session_id):
         return False
     run_py = Path(__file__).resolve().parent.parent / "run.py"
     if not run_py.exists():

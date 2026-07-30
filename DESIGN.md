@@ -1762,10 +1762,10 @@ observing everything. That should be a decision, not a surprise:
 
 | Event | What happens |
 |---|---|
-| Session start | The monitor starts the worker; it loads the task ledger for this session's task (or mints a new one) and sweeps expired ledgers |
+| Session start | The monitor starts the worker; it loads the task ledger for this session's task (or mints a new one) and sweeps expired ledgers. Hook spawning defers for a short grace (`GRACE_S`) so the monitor — the push-capable host — wins the lock outright; a monitor that still loses **stands by** silently rather than exiting (an ended monitor stream is announced to the session, costing the primary a turn — observed live), and takes over if the incumbent dies. An unenrolled workspace's monitor likewise waits dormant, picking up a live enrolment flip |
 | During the session | Passes run on the trigger policy; the window lives in memory; ledger, offsets and advice history are written through to disk |
 | Session end | The worker exits with the session. The task goes **dormant**, not deleted — a resume re-attaches to the same ledger |
-| Crash | The next hook notices no worker on the lockfile and spawns one; it resumes from the offsets and ledger on disk |
+| Crash | The standby monitor takes the lock within its poll interval — or, absent one, the next hook notices no worker on the lockfile and spawns one; either resumes from the offsets and ledger on disk |
 
 What a restart costs is the warm prefix cache and the in-memory window — not durable judgment,
 which is in the ledger, written outside the process.

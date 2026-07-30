@@ -734,3 +734,47 @@ def test_a_bad_catalogue_path_is_refused_at_set_time(tmp_path):
         bad = tmp_path / "bad.json"
         bad.write_text('["not", "a", "mapping"]')
         set_value("catalogue.file", str(bad), scope=GLOBAL)
+
+
+# ── the monitor is the preferred host, and it never exits noisily ───────────
+def test_a_losing_monitor_stands_by_and_takes_over(tmp_path):
+    """A monitor that loses the lock race must not exit — the harness announces
+    an ended stream to the session (observed live costing the primary a turn),
+    and exiting would forfeit the push channel forever. It stands by and takes
+    over the moment the incumbent dies."""
+    import logging
+    import threading
+    from second_brain import worker
+    from second_brain.lock import held
+
+    incumbent = held(paths.lock_path("s-standby"))
+    assert incumbent is not None
+
+    got: dict = {}
+
+    def standby():
+        got["lock"] = worker.standby_for_lock(
+            "s-standby", logging.getLogger("test-standby"), interval_s=0.05)
+
+    thread = threading.Thread(target=standby, daemon=True)
+    thread.start()
+    time.sleep(0.2)
+    assert "lock" not in got                    # incumbent alive: still standing by
+    incumbent.close()
+    thread.join(timeout=3)
+    assert got.get("lock") is not None          # …and took over when it died
+    got["lock"].close()
+
+
+def test_hook_spawning_gives_the_monitor_a_head_start(monkeypatch):
+    """The first hook event stamps first-seen and declines to spawn; after the
+    grace the same session spawns immediately — including a mid-session worker
+    death, whose marker is long past grace."""
+    from second_brain import spawn
+
+    monkeypatch.delenv("SECOND_BRAIN_SPAWN_GRACE_S", raising=False)
+    assert spawn.grace_pending("s-grace") is True         # first sighting: defer
+    assert spawn.grace_pending("s-grace") is True         # still within the grace
+    marker = paths.data_dir() / "state" / "s-grace.first-seen"
+    os.utime(marker, (time.time() - 60, time.time() - 60))
+    assert spawn.grace_pending("s-grace") is False        # grace over: spawn away
