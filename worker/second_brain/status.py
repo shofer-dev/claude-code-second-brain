@@ -59,6 +59,10 @@ class Status:
     mcp: dict[str, Any] = field(default_factory=dict)
     model: str = ""
     note: str = ""
+    version: str = field(default_factory=lambda: paths.plugin_version())
+    """The code version this worker is actually RUNNING — a long-lived process
+    keeps what it imported at startup, so the installed version answers a
+    different question."""
 
     def observe(self, tool: str, raw: int, kept: int) -> None:
         bucket = self.by_tool.setdefault(tool or "text", [0, 0])

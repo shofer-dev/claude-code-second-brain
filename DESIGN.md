@@ -1819,7 +1819,9 @@ plus everything below, which is deliberately kept out of the model's context:
   money** (per-model rates, cache reads at 0.1× and writes at 1.25×/2×) with an
   hourly run rate — refused rather than extrapolated from a single pass, since the
   first pass runs cold and would mislead — budget headroom, pass latency, ledger
-  count and age.
+  count and age, and the code version the worker is actually **running** beside the
+  one installed — flagged when they differ, because a long-lived worker keeps what
+  it imported at startup and the installer cannot know that.
 - **`/second-brain-run`** — ask for a pass *now*: catch the spool up from the
   transcript, run one pass immediately, and print each detector's verdict plus any
   advisory. It bypasses the two limits that pace **cost** (the clock floor and the

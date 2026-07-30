@@ -103,6 +103,21 @@ def append_private(path: Path, line: str) -> None:
         os.close(fd)
 
 
+def plugin_version() -> str:
+    """The version of the code THIS process is running, from the manifest beside it.
+
+    A long-lived worker holds whatever it imported at startup, so "what is
+    installed" and "what is running" are different questions — this answers the
+    second, and `/second-brain-stats` compares the two to flag a stale worker.
+    """
+    try:
+        manifest = Path(__file__).resolve().parents[2] / ".claude-plugin" / "plugin.json"
+        loaded = json.loads(manifest.read_text(encoding="utf-8"))
+        return str(loaded.get("version", "")) or "unknown"
+    except (OSError, ValueError):
+        return "unknown"
+
+
 def slug(value: str, length: int = 16) -> str:
     """A filename-safe, collision-resistant key for an arbitrary string."""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]

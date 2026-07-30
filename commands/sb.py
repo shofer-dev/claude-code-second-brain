@@ -19,6 +19,7 @@ Muting and debug capture are configuration, not commands:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -36,7 +37,22 @@ def _workspace(argv: list[str]) -> str:
 
 
 def _current(workspace: str) -> dict[str, object] | None:
-    for record in status.read_all():
+    """This session's record when the harness says which session this is.
+
+    The `!` blocks these commands run in DO carry `CLAUDE_CODE_SESSION_ID`
+    (observed live), so a command can address the session it was typed into.
+    Without that preference, two concurrent sessions in one workspace flip-flop
+    on whichever worker wrote status last — observed live as `/second-brain-run`
+    repeatedly triggering a stale worker in another terminal's session. The
+    newest-for-workspace record remains the fallback for env-less contexts.
+    """
+    records = status.read_all()
+    invoking = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if invoking:
+        for record in records:
+            if record.get("session_id") == invoking and record.get("workspace") == workspace:
+                return record
+    for record in records:
         if record.get("workspace") == workspace:
             return record
     return None
@@ -118,6 +134,12 @@ def cmd_stats(argv: list[str]) -> int:
     print(f"   state: {state}   ({freshness})")
     print(f"   task: {record.get('task_id')}   model: {record.get('model')}   "
           f"hosted by: {record.get('hosted_by')}")
+    worker_version = str(record.get("version") or "pre-0.4.2")
+    mine = paths.plugin_version()
+    print(f"   version: worker {worker_version} · command {mine}")
+    if worker_version != mine:
+        print("   ⚠  the worker is not running the installed code — a long-lived worker "
+              "keeps what it imported at startup. Restart the session to align them.")
 
     raw = int(record.get("observed_raw_chars", 0) or 0)
     kept = int(record.get("observed_chars", 0) or 0)

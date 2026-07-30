@@ -611,3 +611,33 @@ def test_an_installed_plugin_derives_the_harness_data_dir_without_the_env():
 def test_a_source_checkout_still_uses_the_plain_fallback():
     from second_brain.paths import _derived_data_dir
     assert _derived_data_dir("/home/u/Projects/x/worker/second_brain/paths.py") is None
+
+
+# ── commands address the session they were typed into ───────────────────────
+def test_commands_prefer_the_invoking_sessions_record(monkeypatch):
+    """`!` blocks carry CLAUDE_CODE_SESSION_ID (observed live), so a command
+    targets its own session rather than whichever concurrent worker in the
+    same workspace wrote status last."""
+    import importlib.util
+    from second_brain.status import Status
+
+    spec = importlib.util.spec_from_file_location("sb_under_test", ROOT / "commands" / "sb.py")
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+
+    Status(session_id="s-mine", workspace="/w", task_id="t-mine").save()
+    time.sleep(0.02)
+    Status(session_id="s-other", workspace="/w", task_id="t-other").save()   # newer
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-mine")
+    assert sb._current("/w")["task_id"] == "t-mine"
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    assert sb._current("/w")["task_id"] == "t-other"                        # fallback: newest
+
+
+def test_the_worker_records_the_version_it_actually_runs():
+    from second_brain.paths import plugin_version
+    from second_brain.status import Status
+    manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    assert plugin_version() == manifest["version"]
+    assert Status(session_id="s-v", workspace="/w").version == manifest["version"]
