@@ -566,8 +566,9 @@ the final message and moves on — and turns end infrequently by nature, so the 
 become a pass storm. A turn end therefore always fires a pass: no clock floor, no volume
 threshold, and no draw from the salience bucket. What still binds is what means something —
 the mute, the budget, single-flight, and an empty episode (a turn that produced nothing new
-has nothing to judge). The pass's per-detector verdicts are additionally written to a
-claim-once **turn report** shown to the *user only* at the next interaction
+has nothing to judge). The pass's verdicts reach the *user only*: a one-line outcome on the
+statusline seconds after the pass completes (no interaction needed), and the full
+per-detector lines as a claim-once **turn report** at the next interaction
 (`loop.turn_end_report`, §Human surfaces).
 
 **Bursts are absorbed, not chased.** While throttled, observations keep accumulating and
@@ -1839,7 +1840,11 @@ plus everything below, which is deliberately kept out of the model's context:
   first pass runs cold and would mislead — budget headroom, pass latency, ledger
   count and age, and the code version the worker is actually **running** beside the
   one installed — flagged when they differ, because a long-lived worker keeps what
-  it imported at startup and the installer cannot know that.
+  it imported at startup and the installer cannot know that. The per-detector table
+  carries **KV-cache reads and writes per detector**: writes should sit on the pilot
+  and reads on everyone else, which is the fan-out's shared prefix made visible —
+  measured live as the pilot writing 4,230 tokens and both other detectors each
+  reading exactly 4,230.
 - **`/second-brain-run`** — ask for a pass *now*: catch the spool up from the
   transcript, run one pass immediately, and print each detector's verdict plus any
   advisory. It bypasses the two limits that pace **cost** (the clock floor and the
@@ -1866,11 +1871,15 @@ plus everything below, which is deliberately kept out of the model's context:
     in producing them.
 - **`/second-brain-forget`** — drop a task ledger, a workspace's ledgers, or all of them.
 - **the turn-end report** — every time the primary's loop ends, the pass it fires
-  (§Trigger policy) writes its per-detector verdicts to a claim-once file, and the next
-  hook interaction renders them as `systemMessage` — visible to the person, **never** in
-  the model's context, exactly once (`loop.turn_end_report`, default on). The Stop hook
-  returns in milliseconds while the pass takes seconds, which is why the report arrives at
-  the next interaction rather than inside the ending turn itself.
+  (§Trigger policy) reaches the user on two channels, neither visible to the model. The
+  **statusline** shows the one-line outcome ("last turn: all silent" / "default advised")
+  seconds after the pass completes, with **no further interaction required** — the only
+  surface that can do that, and therefore how the verdict reaches a person who walked away
+  as the turn ended. The full per-detector lines additionally land in a claim-once file the
+  next hook interaction renders as `systemMessage`, exactly once (`loop.turn_end_report`,
+  default on). The Stop hook returns in milliseconds while the pass takes seconds, which is
+  why neither can appear inside the ending turn itself — and why an advisory (the non-silent
+  case) is not affected: the monitor pushes it the moment it clears the gate.
 - **statusline segment** — a quiet indicator: watching / thinking / muted / cost,
   rendered by the harness running one command. **This is the only surface that costs
   nothing at all**: a slash command in Claude Code is a prompt, so it spends a model

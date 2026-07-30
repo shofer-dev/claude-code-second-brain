@@ -671,3 +671,14 @@ def test_the_turn_report_reaches_the_human_only_and_exactly_once(tmp_path):
 
     again = run_hook("drain.py", "tool", {"session_id": "s-tr", "cwd": str(tmp_path)})
     assert again.stdout == ""                             # claimed exactly once
+
+
+def test_the_statusline_shows_the_last_turn_end_verdict():
+    """The statusline is the only user-visible surface needing no next
+    interaction — so it is where the turn-end outcome lands for a person who
+    walked away as the turn ended."""
+    from second_brain.status import Status
+    record = Status(session_id="s-tv", workspace="/w", state="watching", passes=3,
+                    turn_verdict="all silent", turn_verdict_at=time.time())
+    record.save()
+    assert "last turn: all silent" in _statusline({"session_id": "s-tv"})

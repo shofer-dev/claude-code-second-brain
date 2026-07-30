@@ -425,3 +425,43 @@ def test_a_turn_end_fires_a_pass_past_the_floor_and_without_a_bucket(observer):
     import json as jsonmod
     lines = jsonmod.loads(report.read_text())["lines"]
     assert any("repeat-failure" in line for line in lines)
+    # …and the one-line outcome for the statusline, which needs no interaction.
+    assert observer.status.turn_verdict == "all silent"
+    assert observer.status.turn_verdict_at > 0
+
+
+# ── pilot-then-fan-out: the ordering the cache economics rest on ────────────
+def test_the_pilot_runs_first_and_alone_then_the_rest_in_parallel(observer):
+    """One write, N−1 reads only works if the pilot's request has FINISHED
+    before any other fork sends — and the rest must genuinely overlap, or the
+    fan-out's wall-clock advantage is lost. Proven live too: in a captured pass
+    the pilot showed cache write 4230 / read 0 and both other detectors read
+    4230 / wrote 0 — a read can only hit what was already written."""
+    from second_brain.detectors import enabled as enabled_detectors, resolve
+    from tests.test_fork import _tail_text
+
+    for name in observer.cfg.values["detectors"]:
+        observer.cfg.values["detectors"][name]["enabled"] = name in {
+            "repeat-failure", "default", "standard-questions"}
+    spans: dict[str, tuple[float, float]] = {}
+
+    class TimedProvider(FakeProvider):
+        async def send(self, system, messages, tools=None, max_tokens=1024,
+                       cache_marks=None, force_tool=""):
+            name = _tail_text(messages).split("'")[1]
+            start = time.monotonic()
+            await asyncio.sleep(0.05)
+            spans.setdefault(name, (start, time.monotonic()))
+            return _silent()
+
+    observer.provider = TimedProvider()
+    detectors = enabled_detectors(resolve(observer.cfg.group("detectors")))
+    asyncio.run(observer._fan_out(detectors, observer.window.snapshot(), has_new=True))
+
+    assert set(spans) == {"repeat-failure", "default", "standard-questions"}
+    pilot_end = spans["repeat-failure"][1]
+    rest = [span for name, span in spans.items() if name != "repeat-failure"]
+    assert all(start >= pilot_end for start, _ in rest)     # pilot strictly first, alone
+    starts = [s for s, _ in rest]
+    ends = [e for _, e in rest]
+    assert max(starts) < min(ends)                          # …then the rest overlap

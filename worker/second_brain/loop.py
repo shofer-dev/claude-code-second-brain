@@ -514,6 +514,14 @@ class Observer:
         self.status.last_feedback = lines
 
         self._absorb(results, trigger)
+        if trigger == "turn_end":
+            # The one-line outcome for the statusline: visible seconds after the
+            # turn ends with NO next interaction required — the detailed report
+            # below still needs one, because hooks only speak when invoked.
+            advised = [f.detector for f in results if f.verdict == "advise"]
+            self.status.turn_verdict = (", ".join(f"{d} advised" for d in advised)
+                                        or "all silent")
+            self.status.turn_verdict_at = time.time()
         if trigger == "turn_end" and self.cfg.get("loop.turn_end_report", True):
             # The user asked to SEE that the turn-end look happened, verdicts and
             # all — but the model must not: the drain hook renders this as
@@ -630,6 +638,8 @@ class Observer:
         for feedback in results:
             stats = self.status.detector(feedback.detector)
             stats["runs"] += 1
+            stats["cache_read"] = int(stats.get("cache_read", 0)) + feedback.usage.cache_read
+            stats["cache_write"] = int(stats.get("cache_write", 0)) + feedback.usage.cache_write
             self.budget.charge(feedback.usage)
             self._charge_status(feedback.usage)
             self._demotion(feedback)

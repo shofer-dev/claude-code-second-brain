@@ -63,6 +63,12 @@ class Status:
     """The code version this worker is actually RUNNING — a long-lived process
     keeps what it imported at startup, so the installed version answers a
     different question."""
+    turn_verdict: str = ""
+    turn_verdict_at: float = 0.0
+    """The last turn-end pass's one-line outcome ('all silent', 'default
+    advised'), for the statusline — the only user-visible surface that needs no
+    next interaction, so it is how the verdict reaches a person who walked away
+    when the turn ended."""
 
     def observe(self, tool: str, raw: int, kept: int) -> None:
         bucket = self.by_tool.setdefault(tool or "text", [0, 0])
@@ -75,6 +81,10 @@ class Status:
         return self.detectors.setdefault(name, {
             "runs": 0, "advised": 0, "timeouts": 0, "errors": 0, "delivered": 0,
             "adopted": 0, "state": "active",
+            # Per-detector KV-cache traffic: the pilot should accumulate writes
+            # and everyone else reads — the visible proof that the fan-out is
+            # hitting one shared prefix (§Warm the cache before fanning out).
+            "cache_read": 0, "cache_write": 0,
         })
 
     def save(self) -> None:

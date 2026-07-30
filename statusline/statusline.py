@@ -87,6 +87,14 @@ def render(record: dict[str, object]) -> str:
     if delivered:
         parts.append(f"{delivered} advisor{'ies' if delivered != 1 else 'y'}")
 
+    # The last turn-end verdict, fresh: the one user-visible surface that needs
+    # no next interaction, so the person who just watched the turn end sees the
+    # outcome of its pass without typing anything.
+    verdict = str(record.get("turn_verdict") or "")
+    verdict_at = float(record.get("turn_verdict_at", 0) or 0)
+    if verdict and time.time() - verdict_at < 900:
+        parts.append(f"last turn: {verdict}")
+
     tokens = record.get("tokens") or {}
     if isinstance(tokens, dict) and any(tokens.values()):
         cost = pricing.estimate(str(record.get("model", "")),

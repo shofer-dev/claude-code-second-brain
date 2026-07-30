@@ -169,14 +169,16 @@ def cmd_stats(argv: list[str]) -> int:
           f"{record.get('advisories_dropped', 0)} gated away")
     detectors = record.get("detectors") or {}
     if isinstance(detectors, dict) and detectors:
-        print("   per detector:")
+        print("   per detector (cache w should sit on the pilot, cache r on everyone else —")
+        print("   that is the shared prefix working):")
         print(f"     {'detector':<22}{'runs':>6}{'advised':>9}{'sent':>6}{'uptake':>8}"
-              f"{'timeouts':>10}  state")
+              f"{'timeouts':>10}{'cache r':>10}{'cache w':>10}  state")
         for name, d in sorted(detectors.items()):
             uptake = d.get("uptake")
             uptake_text = f"{float(uptake) * 100:.0f}%" if uptake is not None else "—"
             print(f"     {name:<22}{d.get('runs', 0):>6}{d.get('advised', 0):>9}"
-                  f"{d.get('delivered', 0):>6}{uptake_text:>8}{d.get('timeouts', 0):>10}  "
+                  f"{d.get('delivered', 0):>6}{uptake_text:>8}{d.get('timeouts', 0):>10}"
+                  f"{int(d.get('cache_read', 0) or 0):>10,}{int(d.get('cache_write', 0) or 0):>10,}  "
                   f"{d.get('state', 'active')}")
     pending = mailbox.peek(str(record.get("session_id", "")))
     if pending:
