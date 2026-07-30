@@ -6,9 +6,8 @@ may imply a control or a feature that only this file knows is missing.
 ## Unverified seams (Phase 0 — do this before trusting anything below it)
 
 The monitor is load-bearing twice over: it **hosts** the worker and it **delivers**.
-Its *manifest* schema is now verified against the installed CLI; its runtime
-behaviour is not, and the design says nothing below these is worth building on
-unverified seams.
+All of its seams — manifest schema, environment, lifetime, and the wake — have now
+been verified against the installed CLI, live.
 
 - [x] **The monitor manifest schema.** Read out of the installed CLI (v2.1.220):
       `monitors/monitors.json` is parsed as a **bare array** of `strictObject`
@@ -17,23 +16,30 @@ unverified seams.
       This caught a real bug: the file was written as `{"monitors": [...]}`, which
       fails the whole plugin's monitor load — and since the monitor hosts the
       worker, it would have failed silently and completely. Locked in by a test.
-- [ ] A **plugin-declared** monitor receives `CLAUDE_CODE_SESSION_ID` in its
-      environment. Verified for the *Monitor tool* on v2.1.220 by probing a live
-      process, and plugin monitors are armed as Monitor tasks by the same
-      machinery — but the plugin-declared case has not itself been run
-      (a monitor whose command is `env`).
+- [x] A **plugin-declared** monitor receives `CLAUDE_CODE_SESSION_ID` in its
+      environment — verified live by reading `/proc/<pid>/environ` of running
+      plugin-monitor workers (it also receives no `CLAUDE_PLUGIN_DATA`, which is
+      why `paths.data_dir()` derives it).
 - [x] A plugin monitor survives for the whole session and can host a long-running
       asyncio process — verified across multi-day live sessions. The once-planned
       fallback (a hook-spawned detached worker, `spawn.py`) was implemented,
       proved strictly worse, and removed: the monitor is the only host, headless
       surfaces are out of scope, and a monitor dying mid-session means no
       observer until the next session (accepted).
-- [ ] A monitor stdout line actually wakes a *stopped* session. The finish gate's
-      deferred half depends on this and on nothing else.
-- [ ] `SubagentStop` carries `last_assistant_message` on the installed CLI.
-- [ ] `additionalContext` on `PostToolUse` reaches the model without blocking.
+- [x] A monitor stdout line actually wakes a *stopped* session — verified live
+      (2026-07-30): an advisory pushed two seconds after a turn ended arrived as
+      a task-notification that re-opened the stopped loop with no user input;
+      the wake turn's own turn-end pass then produced an organic advisory that
+      woke it a second time, and the chain self-terminated via dedup. The finish
+      gate's deferred half rests on this seam, now proven.
+- [x] `SubagentStop` carries `last_assistant_message` on the installed CLI —
+      verified live, including the trap it carries: the harness also fires it for
+      anonymous UI helper agents (prompt suggesters) whose "final message" is a
+      proposed user prompt; those are dropped by the missing `agent_type`.
+- [x] `additionalContext` on `PostToolUse` reaches the model without blocking —
+      verified live from the first delivered advisory onward.
 
-Until these are done, treat the hook drain as the only proven channel.
+Every Phase-0 seam is now verified against the installed CLI, live. Both delivery channels are proven, including the monitor wake of a stopped session.
 
 ## Not implemented
 
