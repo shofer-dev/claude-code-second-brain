@@ -1,12 +1,15 @@
-"""The session worker: what the monitor hosts, and what a hook spawns if it cannot.
+"""The session worker — hosted by the monitor, and by the monitor only.
 
-There is no daemon. This process lives exactly as long as the session it watches,
-holds that session's lock so only one of it exists, runs the observer loop, and —
-when it is the monitor — pushes advisories by writing one line to stdout.
+There is no daemon and no fallback host. This process lives exactly as long as
+the session it watches, holds that session's lock so only one of it exists, runs
+the observer loop, and pushes advisories by writing one line to stdout. If the
+monitor process dies, the session has no observer until the next session — an
+accepted trade-off; headless surfaces (which never start monitors) are out of
+scope (DESIGN.md §Lifecycle).
 
-The lock is the whole coordination story. Whoever holds it *is* the worker, so the
-monitor-hosted process and the hook-spawned fallback cannot both run, and a crashed
-worker simply releases it for the next hook to notice (DESIGN.md §Lifecycle).
+The lock is the whole coordination story: whoever holds it *is* the worker, and
+a monitor that finds it held stands by rather than exiting, taking over if the
+incumbent dies.
 
 Session identity comes from the environment: Claude Code hands `CLAUDE_CODE_SESSION_ID`
 to monitor processes, which is why no process-ancestry join or cwd heuristic is
@@ -30,7 +33,7 @@ from .loop import Observer
 
 
 def session_id() -> str:
-    for key in ("CLAUDE_CODE_SESSION_ID", "SECOND_BRAIN_SESSION_ID", "CLAUDE_SESSION_ID"):
+    for key in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
         value = os.environ.get(key)
         if value:
             return value
@@ -38,10 +41,9 @@ def session_id() -> str:
 
 
 def working_dir() -> str:
-    for key in ("SECOND_BRAIN_CWD", "CLAUDE_PROJECT_DIR"):
-        value = os.environ.get(key)
-        if value and Path(value).is_dir():
-            return value
+    value = os.environ.get("CLAUDE_PROJECT_DIR")
+    if value and Path(value).is_dir():
+        return value
     return os.getcwd()
 
 
@@ -62,13 +64,12 @@ def setup_logging() -> logging.Logger:
     return log
 
 
-def make_emitter(hosted_by: str, log: logging.Logger) -> Any:
-    """Under a monitor, one stdout line is one notification to the session."""
+def make_emitter(log: logging.Logger) -> Any:
+    """One stdout line is one notification to the session — the push channel."""
     def emit(text: str) -> None:
         log.info("push: %s", text[:200])
-        if hosted_by == "monitor":
-            sys.stdout.write(text.rstrip("\n") + "\n")
-            sys.stdout.flush()
+        sys.stdout.write(text.rstrip("\n") + "\n")
+        sys.stdout.flush()
     return emit
 
 
@@ -122,34 +123,24 @@ def main() -> int:
         log.warning("no session id in the environment; nothing to watch")
         return 0
 
-    hosted_by = os.environ.get("SECOND_BRAIN_HOSTED_BY", "monitor")
     lock = held(paths.lock_path(sid))
     if lock is None:
-        if hosted_by != "monitor":
-            log.info("another worker already holds session %s; exiting", sid)
-            return 0
         lock = standby_for_lock(
             sid, log, float(os.environ.get("SECOND_BRAIN_STANDBY_POLL_S", "30")))
 
     cwd = working_dir()
     workspace = paths.workspace_key(cwd)
     cfg = Config.load(workspace)
-    if not cfg.observing(workspace) and hosted_by == "monitor":
+    if not cfg.observing(workspace):
         log.info("workspace %s is not enrolled; monitor waiting dormant for enrolment", workspace)
     while not cfg.observing(workspace):
         # Enrolment is a decision, not a surprise: an unenrolled workspace gets
-        # no OBSERVING worker. A hook-spawned process exits; a monitor waits
-        # dormant instead — exiting would end its stream (the same noisy
-        # notification the standby above avoids), and waiting means a live
+        # no OBSERVING worker. The monitor waits dormant rather than exiting —
+        # an ended stream is announced to the session, and waiting means a live
         # enrolment flip is picked up without a session restart.
-        if hosted_by != "monitor":
-            log.info("workspace %s is not enrolled; exiting", workspace)
-            lock.close()
-            return 0
         time.sleep(float(os.environ.get("SECOND_BRAIN_STANDBY_POLL_S", "30")) * 2)
         cfg = Config.load(workspace)
-    observer = Observer(sid, cwd, workspace, emit=make_emitter(hosted_by, log),
-                        log=log, hosted_by=hosted_by)
+    observer = Observer(sid, cwd, workspace, emit=make_emitter(log), log=log)
     try:
         asyncio.run(_run(observer, log))
     except KeyboardInterrupt:

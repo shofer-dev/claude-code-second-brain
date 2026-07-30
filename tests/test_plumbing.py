@@ -74,8 +74,7 @@ def test_hook_and_plugin_manifests_point_at_files_that_exist():
 
 # ── the hooks, as processes ─────────────────────────────────────────────────
 def run_hook(script: str, mode: str, payload: dict, env_extra: dict | None = None):
-    env = {**os.environ, "SECOND_BRAIN_NO_SPAWN": "1"}
-    env.update(env_extra or {})
+    env = {**os.environ, **(env_extra or {})}
     return subprocess.run(
         [sys.executable, str(ROOT / "hooks" / script), mode],
         input=json.dumps(payload), capture_output=True, text=True, env=env, check=False,
@@ -143,7 +142,7 @@ def test_subagent_stop_keeps_the_conclusion_not_the_conversation(tmp_path):
 def test_a_malformed_payload_still_exits_zero(tmp_path):
     result = subprocess.run([sys.executable, str(ROOT / "hooks" / "feed.py"), "post_tool"],
                             input="not json", capture_output=True, text=True,
-                            env={**os.environ, "SECOND_BRAIN_NO_SPAWN": "1"}, check=False)
+                            env=dict(os.environ), check=False)
     assert result.returncode == 0 and result.stdout == ""
 
 
@@ -764,17 +763,3 @@ def test_a_losing_monitor_stands_by_and_takes_over(tmp_path):
     thread.join(timeout=3)
     assert got.get("lock") is not None          # …and took over when it died
     got["lock"].close()
-
-
-def test_hook_spawning_gives_the_monitor_a_head_start(monkeypatch):
-    """The first hook event stamps first-seen and declines to spawn; after the
-    grace the same session spawns immediately — including a mid-session worker
-    death, whose marker is long past grace."""
-    from second_brain import spawn
-
-    monkeypatch.delenv("SECOND_BRAIN_SPAWN_GRACE_S", raising=False)
-    assert spawn.grace_pending("s-grace") is True         # first sighting: defer
-    assert spawn.grace_pending("s-grace") is True         # still within the grace
-    marker = paths.data_dir() / "state" / "s-grace.first-seen"
-    os.utime(marker, (time.time() - 60, time.time() - 60))
-    assert spawn.grace_pending("s-grace") is False        # grace over: spawn away

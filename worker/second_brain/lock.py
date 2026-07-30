@@ -8,7 +8,7 @@ Two postures, deliberately different:
 
 - **`held()`** — the worker's session lock. Acquired once, non-blocking, and kept
   for the process's lifetime; whoever holds it *is* the session's worker, so the
-  hook-spawned fallback and the monitor-hosted worker cannot both run.
+  two incarnations of the monitor's worker cannot both run.
 - **`claim()`** — a short exclusive section around a mailbox rewrite. Never
   blocks: on contention the caller does nothing, because the other channel is by
   definition mid-delivery.

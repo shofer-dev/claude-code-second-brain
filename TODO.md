@@ -22,10 +22,12 @@ unverified seams.
       process, and plugin monitors are armed as Monitor tasks by the same
       machinery — but the plugin-declared case has not itself been run
       (a monitor whose command is `env`).
-- [ ] A plugin monitor survives for the whole session and can host a long-running
-      asyncio process. **If it turns out to be short-lived, the hosting decision
-      reverts** to the hook-spawned detached worker — the same code with a worse
-      lifetime, already implemented in `spawn.py`.
+- [x] A plugin monitor survives for the whole session and can host a long-running
+      asyncio process — verified across multi-day live sessions. The once-planned
+      fallback (a hook-spawned detached worker, `spawn.py`) was implemented,
+      proved strictly worse, and removed: the monitor is the only host, headless
+      surfaces are out of scope, and a monitor dying mid-session means no
+      observer until the next session (accepted).
 - [ ] A monitor stdout line actually wakes a *stopped* session. The finish gate's
       deferred half depends on this and on nothing else.
 - [ ] `SubagentStop` carries `last_assistant_message` on the installed CLI.

@@ -132,8 +132,7 @@ def cmd_stats(argv: list[str]) -> int:
     else:
         freshness = f"stale, last written {_age(updated)}"
     print(f"   state: {state}   ({freshness})")
-    print(f"   task: {record.get('task_id')}   model: {record.get('model')}   "
-          f"hosted by: {record.get('hosted_by')}")
+    print(f"   task: {record.get('task_id')}   model: {record.get('model')}")
     worker_version = str(record.get("version") or "pre-0.4.2")
     mine = paths.plugin_version()
     print(f"   version: worker {worker_version} · command {mine}")

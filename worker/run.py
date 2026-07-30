@@ -2,7 +2,7 @@
 """Entry point for the session worker — the plugin monitor's command.
 
 Kept to nothing but a path fix and a call, so the same module runs whether Claude
-Code started it as a monitor or a hook spawned it detached.
+Code started it as a monitor — the only host there is.
 """
 from __future__ import annotations
 

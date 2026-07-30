@@ -1583,12 +1583,13 @@ replaced.
 Running both is safe by construction: the mailbox drains **exactly once**, so whichever channel
 reaches an advisory first wins and the other finds nothing.
 
-There is a wrinkle worth naming: on a platform without monitors, the same process that would
-have delivered is also the one that *thinks* (§The worker). So the fallback is not only a
-delivery fallback — the hook must also lazily spawn a detached worker, guarded by a per-session
-lockfile. That path is strictly worse (no push, no waking a stopped loop, and a worker whose
-lifetime is bounded by nothing more graceful than the session's file handles), which is the
-concrete cost of running where monitors are unavailable rather than an abstract one.
+One scope decision follows and is deliberate: **the monitor is the only worker host.** On a
+platform without monitors (headless surfaces, the SDK, CI) no worker ever starts — hooks feed
+the spool and deliver from the mailbox, nothing more. Headless observation is out of scope, a
+monitor process dying mid-session means no observer until the next session, and hooks never
+spawn a worker. The alternative — a hook-spawned detached fallback worker — existed and was
+removed: it was strictly worse (no push, no waking a stopped loop), and keeping the two-host
+machinery to cover accepted corner cases cost more than the cases were worth.
 
 ### The finish gate — the one time it may keep the agent working
 
@@ -1717,9 +1718,9 @@ reasoning, in the order the requirements fall away:
   or listening (§The one thing that crosses tasks). *A shared requirement is not automatically a
   shared process* — that inference is what an earlier draft got wrong.
 
-So: **one worker per session, hosted by the monitor**, plus files. If monitors are unavailable
-on a platform, the feed hook lazily spawns the same worker detached, guarded by a per-session
-lockfile so exactly one exists either way.
+So: **one worker per session, hosted by the monitor, and only by the monitor**, plus files.
+Where monitors do not exist there is no worker at all — hooks still feed the spool and deliver
+from the mailbox, and headless observation is out of scope by decision.
 
 ### Trust boundary
 
@@ -1767,10 +1768,10 @@ observing everything. That should be a decision, not a surprise:
 
 | Event | What happens |
 |---|---|
-| Session start | The monitor starts the worker; it loads the task ledger for this session's task (or mints a new one) and sweeps expired ledgers. Hook spawning defers for a short grace (`GRACE_S`) so the monitor — the push-capable host — wins the lock outright; a monitor that still loses **stands by** silently rather than exiting (an ended monitor stream is announced to the session, costing the primary a turn — observed live), and takes over if the incumbent dies. An unenrolled workspace's monitor likewise waits dormant, picking up a live enrolment flip |
+| Session start | The monitor starts the worker — the only host there is; it loads the task ledger for this session's task (or mints a new one) and sweeps expired ledgers. A monitor that finds the lock held (a surviving worker from a resumed session) **stands by** silently rather than exiting — an ended monitor stream is announced to the session, costing the primary a turn (observed live) — and takes over if the incumbent dies. An unenrolled workspace's monitor likewise waits dormant, picking up a live enrolment flip |
 | During the session | Passes run on the trigger policy; the window lives in memory; ledger, offsets and advice history are written through to disk |
 | Session end | The worker exits with the session. The task goes **dormant**, not deleted — a resume re-attaches to the same ledger |
-| Crash | The standby monitor takes the lock within its poll interval — or, absent one, the next hook notices no worker on the lockfile and spawns one; either resumes from the offsets and ledger on disk |
+| Crash | A standby monitor (if one is waiting) takes the lock within its poll interval and resumes from the offsets and ledger on disk. If the monitor process itself is gone, the session has no observer until the next session — accepted; hooks never spawn a replacement |
 
 What a restart costs is the warm prefix cache and the in-memory window — not durable judgment,
 which is in the ledger, written outside the process.
@@ -1819,7 +1820,7 @@ needs a live session, and §Did it land? is what measures that.
 
 | Failure | Behaviour |
 |---|---|
-| No worker running (monitors unavailable, crash, opt-out) | Hooks append to the spool and exit 0; the session is completely unaffected. No advice, no error, no stall — and the next hook respawns the worker. |
+| No worker running (monitors unavailable, crash, opt-out) | Hooks append to the spool and exit 0; the session is completely unaffected. No advice, no error, no stall — and no respawn: the monitor is the only host, so the session simply goes unobserved until the next one. |
 | Crashed worker's index entries | Expire on the index TTL; no cleanup path is needed, and a stale entry costs at most one spurious collision warning. |
 | Worker crashes mid-task | Ledgers, offsets and advice history are on disk and survive; the window and mailbox do not. Costs a warm prefix cache and any undelivered advisory — which would have been stale anyway. |
 | Transcript offset lost | Re-seek to the file's current end; a gap in observation, never a duplicate or a crash. |
@@ -2018,7 +2019,7 @@ claude-code/second-brain/
 │       ├── window · ledger · task                 what is remembered, and for how long
 │       ├── detectors · fork · tools · mcpclient · provider · http · oauth · prompts  how a pass thinks
 │       ├── gate · advice · mailbox                what may be said
-│       ├── loop · worker · spawn · index · status when any of it happens
+│       ├── loop · worker · index · status when any of it happens
 │       └── config · constants · paths · lock      the shared floor
 ├── commands/                sb.py + one .md per human surface
 ├── tests/                   projection goldens, detector fixtures, gate simulations (§Testing)
@@ -2069,9 +2070,10 @@ installed CLI: a **plugin-declared** monitor receives `CLAUDE_CODE_SESSION_ID` (
 Monitor tool; the check is a monitor whose command is `env`), survives for the session, and its
 stdout line wakes a stopped session; `additionalContext` on `PostToolUse` reaches the model
 without blocking; transcript record shape and offset stability; `SubagentStop` carries
-`last_assistant_message`. **If a plugin monitor turns out to be short-lived or unable to host a
-long-running process, the hosting decision reverts** — to the hook-spawned detached worker,
-which is the same code with a worse lifetime. Nothing below is worth building on unverified
+`last_assistant_message`. A plugin monitor hosting a long-running asyncio
+process has since been verified across multi-day live sessions, and the once-planned fallback
+— a hook-spawned detached worker — was implemented, proved strictly worse, and removed when
+monitor-only hosting became a scope decision. Nothing below is worth building on unverified
 seams.
 
 **Phase 1 — plumbing, no model.** Feed hook + projector + spool + **the monitor-hosted worker**

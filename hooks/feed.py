@@ -24,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "worker"))
 from second_brain import paths, spool, transcript                      # noqa: E402
 from second_brain.config import Config                                 # noqa: E402
 from second_brain.projection import META, SUBAGENT, Observation, cap, project_records  # noqa: E402
-from second_brain.spawn import ensure_worker                           # noqa: E402
 
 
 def _meta(event: str, ts: float, **fields: object) -> Observation:
@@ -112,10 +111,9 @@ def main(mode: str) -> int:
     records = [*pre, *projected, *post]
     if records:
         spool.append(session_id, records)
-
-    if mode == "session_end":
-        return 0
-    ensure_worker(session_id, cwd, transcript_path)
+    # The monitor is the ONLY worker host — hooks feed and deliver, never spawn.
+    # If the monitor process is gone, the session has no observer until the next
+    # session: an accepted trade-off, and headless surfaces are out of scope.
     return 0
 
 

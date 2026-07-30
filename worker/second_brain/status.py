@@ -29,7 +29,6 @@ class Status:
     cwd: str = ""
     state: str = "starting"           # watching | thinking | muted | silent (budget) | stopped
     pid: int = 0
-    hosted_by: str = ""               # monitor | hook
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 

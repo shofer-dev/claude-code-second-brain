@@ -26,8 +26,7 @@ def observer(tmp_path):
     emitted: list[str] = []
     log = logging.getLogger("test-second-brain")
     log.addHandler(logging.NullHandler())
-    obs = Observer("s-obs", str(tmp_path), "/repo", emit=emitted.append, log=log,
-                   hosted_by="monitor")
+    obs = Observer("s-obs", str(tmp_path), "/repo", emit=emitted.append, log=log)
     obs.emitted = emitted                            # type: ignore[attr-defined]
     # Detectors are the pilot plus one, so the fan-out is exercised without noise.
     for name in list(obs.cfg.values["detectors"]):
@@ -58,9 +57,16 @@ def tick(observer: Observer) -> None:
     asyncio.run(observer._tick())
 
 
+def suppress_push(observer: Observer) -> None:
+    """Keep the mailbox inspectable: the monitor push would claim it first."""
+    async def _no_push() -> None:
+        pass
+    observer._push = _no_push          # type: ignore[method-assign]
+
+
 # ── the happy path ──────────────────────────────────────────────────────────
 def test_a_pass_turns_observations_into_a_gated_advisory(observer):
-    observer.hosted_by = "hook"          # no monitor push, so the mailbox is inspectable
+    suppress_push(observer)              # no monitor push, so the mailbox is inspectable
     observer.provider = FakeProvider({"default": [_advise()], "repeat-failure": [_silent()]})
     feed("s-obs", text(), tool())
     tick(observer)
@@ -253,7 +259,7 @@ def test_a_finish_gate_advisory_is_downgraded_when_work_is_outstanding(observer)
         "verdict": "advise", "headline": "no deploy command observed", "confidence": 0.9,
         "dedup_key": "deploy", "evidence": ["services.json bumped"], "finish_gate": True,
     })], usage=Usage())
-    observer.hosted_by = "hook"
+    suppress_push(observer)
     observer.provider = FakeProvider({"default": [advise_finish], "repeat-failure": [_silent()]})
     feed("s-obs", tool("Bash", "Bash (background)\n make watch", background=True), text())
     tick(observer)

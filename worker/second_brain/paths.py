@@ -29,10 +29,9 @@ def data_dir() -> Path:
     `CLAUDE_PLUGIN_DATA` is set by Claude Code for hooks — but NOT for monitor
     processes or for the `!` blocks slash commands run, both observed live with
     empty environments. A naive fallback therefore splits the plugin into two
-    disjoint state worlds: the hook-spawned worker in the harness's directory
-    and the monitor-hosted worker in the fallback, each holding its own lock —
-    two workers per session, double passes, and commands reading whichever
-    world the monitor lives in. So when the env var is absent, the harness's
+    disjoint state worlds: the hooks writing state into the harness's directory
+    and the monitor-hosted worker reading and writing the fallback — with the
+    commands in whichever world the monitor lives in. So when the env var is absent, the harness's
     directory is *derived* from this file's own install location instead
     (`_derived_data_dir`); the plain fallback remains only for source checkouts
     (tests, a bare `python3 run.py`, `claude --plugin-dir` development).

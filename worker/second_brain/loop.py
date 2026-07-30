@@ -120,13 +120,12 @@ class Observer:
     """One session's observer loop."""
 
     def __init__(self, session_id: str, cwd: str, workspace: str, *,
-                 emit: Callable[[str], None], log: Any, hosted_by: str = "monitor") -> None:
+                 emit: Callable[[str], None], log: Any) -> None:
         self.session_id = session_id
         self.cwd = cwd
         self.workspace = workspace
         self.emit = emit
         self.log = log
-        self.hosted_by = hosted_by
 
         self.cfg = Config.load(workspace)
         self.binding = Binding.load(session_id)
@@ -143,7 +142,7 @@ class Observer:
         self.mcp: Any = None
         self.provider: Any = None
         self.status = Status(session_id=session_id, task_id=self.binding.task_id,
-                             workspace=workspace, cwd=cwd, hosted_by=hosted_by,
+                             workspace=workspace, cwd=cwd,
                              model=str(self.cfg.get("model.name")))
 
         self.reader = spool.SpoolReader(session_id)
@@ -772,16 +771,13 @@ class Observer:
     async def _push(self) -> None:
         """The monitor channel: claim one advisory and push it as a notification.
 
-        Only under the monitor host — a hook-spawned worker's stdout is a log file,
-        so pushing there would deliver to nobody. Finish-gate advisories are left
-        for the `Stop` hook unless the turn has already ended, which is the deferred
-        wake the finish gate needs. Human-only advice is never pushed here: a
-        monitor line is delivered to the agent as a notification, and human-only
-        means it must NOT enter the model's context — the drain hook's
-        `systemMessage` is the only channel that can reach the person alone.
+        Finish-gate advisories are left for the `Stop` hook unless the turn has
+        already ended, which is the deferred wake the finish gate needs.
+        Human-only advice is never pushed here: a monitor line is delivered to
+        the agent as a notification, and human-only means it must NOT enter the
+        model's context — the drain hook's `systemMessage` is the only channel
+        that can reach the person alone.
         """
-        if self.hosted_by != "monitor":
-            return
         deferred_ok = self._genuinely_finished()
         advisory = mailbox.claim(
             self.session_id,
