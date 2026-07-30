@@ -98,6 +98,16 @@ Until these are done, treat the hook drain as the only proven channel.
   sessions each enforce their own token ceiling; there is no cross-session budget.
   The fix, if it is ever needed, is a lockfile-guarded counter — not a service.
 
+## Known gaps
+
+- **`claude --plugin-dir` development can still split state.** The data-dir
+  derivation (`paths._derived_data_dir`) heals the missing `CLAUDE_PLUGIN_DATA`
+  for monitors and `!` command blocks only when the plugin runs from the
+  install cache; a source checkout falls back to `data/second-brain`, so if the
+  harness hands hooks a differently-named dev directory, the two-world split
+  returns in dev mode. Fix if it ever bites: a pointer file written by the
+  component that has the env.
+
 ## Known drifts from a full design-vs-implementation review (2026-07-30)
 
 Confirmed against the code, accepted for now, in rough severity order:

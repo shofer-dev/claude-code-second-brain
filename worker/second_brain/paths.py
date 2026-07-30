@@ -26,13 +26,41 @@ _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 def data_dir() -> Path:
     """The plugin's state root, created if missing.
 
-    `CLAUDE_PLUGIN_DATA` is set by Claude Code for hooks, monitors and MCP
-    servers; the fallback keeps the worker and the offline test harness working
-    when it is not (a bare `python3 run.py`, a replay run).
+    `CLAUDE_PLUGIN_DATA` is set by Claude Code for hooks — but NOT for monitor
+    processes or for the `!` blocks slash commands run, both observed live with
+    empty environments. A naive fallback therefore splits the plugin into two
+    disjoint state worlds: the hook-spawned worker in the harness's directory
+    and the monitor-hosted worker in the fallback, each holding its own lock —
+    two workers per session, double passes, and commands reading whichever
+    world the monitor lives in. So when the env var is absent, the harness's
+    directory is *derived* from this file's own install location instead
+    (`_derived_data_dir`); the plain fallback remains only for source checkouts
+    (tests, a bare `python3 run.py`, `claude --plugin-dir` development).
     """
     env = os.environ.get("CLAUDE_PLUGIN_DATA")
-    root = Path(env) if env else Path.home() / ".claude" / "plugins" / "data" / "second-brain"
+    if env:
+        return ensure_dir(Path(env))
+    root = _derived_data_dir() or Path.home() / ".claude" / "plugins" / "data" / "second-brain"
     return ensure_dir(root)
+
+
+def _derived_data_dir(source: str | None = None) -> Path | None:
+    """The directory the harness would have handed us, from our install path.
+
+    An installed plugin runs from `…/plugins/cache/<marketplace>/<plugin>/<v>/…`
+    and its data lives at `…/plugins/data/<plugin>-<marketplace>` — the mapping
+    is deterministic, so an env-less process can recover it. Returns None when
+    this file is not running from a plugin cache (a source checkout).
+    """
+    here = Path(source or __file__)
+    for parent in here.parents:
+        if parent.name == "cache" and parent.parent.name == "plugins":
+            rel = here.relative_to(parent)
+            if len(rel.parts) >= 2:
+                marketplace, plugin = rel.parts[0], rel.parts[1]
+                return parent.parent / "data" / f"{plugin}-{marketplace}"
+            return None
+    return None
 
 
 def ensure_dir(p: Path) -> Path:

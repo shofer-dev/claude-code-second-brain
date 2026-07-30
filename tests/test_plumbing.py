@@ -592,3 +592,22 @@ def test_render_digest_is_the_shared_prefix_verbatim_and_mechanical(cfg):
 
     again = window.render_digest(session_id="s-dump", task_id="t-dump", pass_number=1)
     assert body(again) == body(text)
+
+
+# ── the data-dir split (monitors and command blocks get no env) ─────────────
+def test_an_installed_plugin_derives_the_harness_data_dir_without_the_env():
+    """Monitor processes and `!` command blocks receive no CLAUDE_PLUGIN_DATA
+    (observed live). An installed plugin must still land in the same state
+    directory as the hooks, or the session splits into two worker worlds."""
+    from second_brain.paths import _derived_data_dir
+    derived = _derived_data_dir(
+        "/home/u/.claude/plugins/cache/shofer-second-brain/second-brain/0.4.1/"
+        "worker/second_brain/paths.py")
+    assert derived is not None
+    assert derived.as_posix().endswith(
+        ".claude/plugins/data/second-brain-shofer-second-brain")
+
+
+def test_a_source_checkout_still_uses_the_plain_fallback():
+    from second_brain.paths import _derived_data_dir
+    assert _derived_data_dir("/home/u/Projects/x/worker/second_brain/paths.py") is None

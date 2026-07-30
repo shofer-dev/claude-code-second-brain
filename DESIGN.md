@@ -1867,6 +1867,16 @@ The one thing this loses against a queryable service is *liveness*: a stats read
 worker to answer, so what you see is as fresh as its last pass. Given the pass cadence is
 minutes by design (§Trigger policy), that is the natural resolution anyway.
 
+**One directory, however a process was started.** `CLAUDE_PLUGIN_DATA` is set by Claude Code
+for hooks — but **not** for monitor processes or for the `!` blocks these commands run
+(observed live, both with empty environments). A naive fallback path therefore splits the
+plugin into two disjoint state worlds: the hook-spawned worker in the harness's directory and
+the monitor-hosted worker in the fallback, each holding its own session lock — two workers per
+session, double observation and double passes, with the commands reading whichever world the
+monitor lives in. So when the env var is absent, an installed plugin *derives* the harness's
+directory from its own install path (`cache/<marketplace>/<plugin>/<version>` maps to
+`data/<plugin>-<marketplace>`); the plain fallback remains only for source checkouts.
+
 ---
 
 ## Configuration
