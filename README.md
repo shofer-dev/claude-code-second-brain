@@ -40,21 +40,17 @@ gaps: [`TODO.md`](TODO.md).
 
 ```mermaid
 flowchart LR
-  subgraph session["Claude Code session — your premium model"]
-    A["Primary agent"]
-    T[("transcript")]
-    A --> T
-  end
-  T -. "hooks project emissions only<br/>deterministic, zero tokens" .-> SP[("spool")]
-  subgraph worker["Second Brain — one worker per session, hosted by the plugin's monitor"]
-    W["append-only window<br/>(the digest, prefix-cached)"]
-    D["detector forks<br/>pilot first, rest in parallel"]
-    G["the gate<br/>evidence · dedup · rate limit · staleness"]
-    SP --> W --> D --> G
-  end
-  D -- "read-only tools, path-jailed" --> R[("your repo")]
-  G -- "one advisory, rarely" --> A
-  G -- "the same words, the same moment" --> You(["You"])
+  A["Your agent<br/>(premium model)"]
+  SB["Second Brain<br/>(cheap model + detectors)"]
+  G{"the gate —<br/>most findings die here"}
+  You(["You"])
+  R[("your repo")]
+
+  A -- "what it said and did —<br/>never tool results, zero tokens" --> SB
+  SB -. "verifies claims<br/>(read-only)" .-> R
+  SB -- "a finding, occasionally" --> G
+  G -- "ONE advisory, rarely —<br/>it can wake an ended turn" --> A
+  G -- "the same words,<br/>at the same moment" --> You
 ```
 
 Hooks project the primary's transcript into a spool file — a deterministic, local
