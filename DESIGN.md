@@ -370,6 +370,13 @@ This is the same principle as dropping successful tool results: **keep what the 
 concluded, drop how it got there**. A subagent's transcript is re-derivable and mostly
 irrelevant; its verdict is neither.
 
+**Only typed agents count.** Claude Code also fires `SubagentStop` for anonymous UI helper
+agents — observed live: the input-box prompt *suggesters*, whose `last_assistant_message` is a
+proposed **user** prompt that exists in no transcript. One such suggestion ("delete it, this
+was just a test") entered the window as a subagent's conclusion and produced a confident false
+advisory — the debug capture is what traced it. A stop with no `agent_type` is the harness
+talking to itself and is dropped whole; a typed agent is a real delegation.
+
 Arguments are the largest observable segment (34.6 %), so this is the design's main cost
 lever. Projection keeps **intent** — what the agent reached for, where, and to what end —
 and elides **payload**: heredoc bodies, file contents, edit bodies, long inline literals.

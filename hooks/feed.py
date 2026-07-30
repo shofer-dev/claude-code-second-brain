@@ -72,17 +72,27 @@ def main(mode: str) -> int:
     elif mode == "session_end":
         post.append(_meta("session_end", now, reason=str(payload.get("reason") or "")))
     elif mode == "subagent_stop":
+        agent_type = str(payload.get("agent_type") or "")
         final = str(payload.get("last_assistant_message") or "")
-        if final.strip():
-            # The conclusion without the transcript: what the primary itself acts
-            # on, at ~0.6 % of the volume of following the sidechain (§Subagents).
-            post.append(Observation(
-                kind=SUBAGENT, ts=now, raw_chars=len(final),
-                tool=str(payload.get("agent_type") or "subagent"),
-                body=cap(final, int(projection_cfg.get("subagent_final_cap", 1500)), projection_cfg),
-                meta={"agent_id": str(payload.get("agent_id") or "")},
-            ))
-        post.append(_meta("subagent_stop", now, agent_id=str(payload.get("agent_id") or "")))
+        # Only TYPED agents are real delegations. Claude Code also fires
+        # SubagentStop for anonymous UI helper agents — observed live: the
+        # input-box prompt suggesters, whose "last_assistant_message" is a
+        # proposed USER prompt that exists in no transcript. One such suggestion
+        # ("delete it, this was just a test") entered the window as a subagent's
+        # conclusion and produced a confident false advisory. An untyped stop is
+        # the harness talking to itself, and it is dropped whole.
+        if agent_type:
+            if final.strip():
+                # The conclusion without the transcript: what the primary itself
+                # acts on, at ~0.6 % of the volume of the sidechain (§Subagents).
+                post.append(Observation(
+                    kind=SUBAGENT, ts=now, raw_chars=len(final),
+                    tool=agent_type,
+                    body=cap(final, int(projection_cfg.get("subagent_final_cap", 1500)),
+                             projection_cfg),
+                    meta={"agent_id": str(payload.get("agent_id") or "")},
+                ))
+            post.append(_meta("subagent_stop", now, agent_id=str(payload.get("agent_id") or "")))
     elif mode == "stop":
         post.append(_meta("stop", now, stop_hook_active=bool(payload.get("stop_hook_active"))))
     elif mode == "user_prompt":

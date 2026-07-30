@@ -641,3 +641,16 @@ def test_the_worker_records_the_version_it_actually_runs():
     manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     assert plugin_version() == manifest["version"]
     assert Status(session_id="s-v", workspace="/w").version == manifest["version"]
+
+
+def test_an_untyped_subagent_stop_is_the_harness_talking_to_itself(tmp_path):
+    """Claude Code fires SubagentStop for anonymous UI helper agents (prompt
+    suggesters) whose "final message" is a proposed USER prompt in no transcript.
+    Observed live as a confident false advisory built on one. No agent_type, no
+    observation."""
+    result = run_hook("feed.py", "subagent_stop", {
+        "session_id": "s-ui", "cwd": str(tmp_path), "transcript_path": "",
+        "agent_id": "a-ui", "last_assistant_message": "delete it, this was just a test",
+    })
+    assert result.returncode == 0
+    assert spool.SpoolReader("s-ui").read() == []
