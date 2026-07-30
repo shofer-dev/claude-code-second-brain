@@ -294,3 +294,33 @@ def test_the_last_iteration_forces_the_verdict_without_touching_the_tools(window
     assert first["force_tool"] == ""                 # early: it may look things up
     assert last["force_tool"] == FEEDBACK_TOOL       # last: the verdict is demanded
     assert feedback.verdict == "silent" and feedback.error == ""
+
+
+def test_the_pilot_falls_back_to_a_tool_less_detector_when_disabled(cfg):
+    """Disabling the declared pilot must not break the warm-up: the chain is
+    declared pilot → first tool-less enabled detector → anyone. Tool-less is
+    preferred because everything else waits on the pilot, and a fork that might
+    sit in tools stretches the critical path."""
+    from second_brain.detectors import enabled as enabled_detectors
+
+    cfg.values["detectors"]["repeat-failure"]["enabled"] = False
+    detectors = enabled_detectors(resolve(cfg.group("detectors")))
+    assert all(not d.pilot for d in detectors)
+    pilot = pick_pilot(detectors)
+    assert pilot is not None
+    assert pilot.name == "standard-questions"       # tool-less beats tool-using
+    assert pilot.grant.empty
+
+
+def test_a_tool_using_pilot_is_the_last_resort(cfg):
+    """With only tool-armed detectors enabled, one of them still pilots: the
+    prefix must be written once by SOMEONE before the fan-out, tools or not."""
+    from second_brain.detectors import enabled as enabled_detectors
+
+    for name, spec in cfg.values["detectors"].items():
+        spec["enabled"] = name == "default"
+    detectors = enabled_detectors(resolve(cfg.group("detectors")))
+    assert [d.name for d in detectors] == ["default"]
+    pilot = pick_pilot(detectors)
+    assert pilot is not None and pilot.name == "default"
+    assert not pilot.grant.empty
