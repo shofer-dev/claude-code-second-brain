@@ -808,6 +808,16 @@ registered by name, individually enable-able, and calibrated by its own uptake r
 window*, not a separate observer — see §What a detector sees for why that is a cost decision
 and where it leaks.
 
+**The catalogue's source of truth is a JSON file, and you can bring your own.** The bundled
+`worker/second_brain/detectors.json` ships the built-ins; `catalogue.file` points at a user's
+own file, whose entries **replace** the bundle wholesale — copy the bundled file to extend it
+(replacement is predictable; merging would resurrect detectors you meant to be rid of).
+Per-field overrides (`detectors.<name>.<field>`, global and workspace layers) still merge on
+top of whichever catalogue is in force. The path is validated when set; a file that breaks
+later falls back to the bundle at load time, because a broken catalogue must degrade to the
+shipped one, never to no observer. Like every configuration value it is re-read at each pass
+boundary, so editing your catalogue takes effect without a restart.
+
 The architectural fact that shapes the contract: **detectors are tool-calling**. "Is there a
 recent commit that already touched this?" is a `git log` call; "has this been solved
 elsewhere?" is a search across the repo — or a call to a code-search MCP server if one is
@@ -1965,6 +1975,7 @@ each effective value came from, because a knob you cannot trace is a knob you ca
 | | `max_parallel_forks` | fan-out width | wall-clock ↔ provider rate limits |
 | | `demote_stride`, `demote_retry_s` | how a straggling detector is rate-limited, then disabled, then retried | responsiveness ↔ coverage |
 | `detectors` | per detector: `enabled`, **`system`** (its own prompt), **`tools`** (built-ins, MCP servers or tools, allowlisted commands — empty by default), `schema`, `deadline_s`, `cadence`, `confidence_floor`, and its own `config` block | built-ins on, tool-less | which judgments are made, with what reach (§A detector definition) |
+| `catalogue` | `file` | empty = the bundled `detectors.json`; a path replaces the catalogue wholesale with your own JSON | whose lenses run at all (§The contract) |
 | `model` | `cache_ttl` | prefix cache lifetime, chosen together with `loop.min_interval_s` | cache hits ↔ pass cadence |
 | `model` | `provider`, `name`, `base_url` | zero-config subscription default | cost ↔ judgment quality |
 

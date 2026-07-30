@@ -17,7 +17,8 @@ echo "── manifests ───────────────────
 python3 - <<'PY'
 import json, pathlib, sys
 for path in [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json",
-             "hooks/hooks.json", "monitors/monitors.json"]:
+             "hooks/hooks.json", "monitors/monitors.json",
+             "worker/second_brain/detectors.json"]:
     try:
         json.loads(pathlib.Path(path).read_text())
     except Exception as exc:

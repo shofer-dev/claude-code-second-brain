@@ -1,15 +1,16 @@
 """The detector contract, and the catalogue that ships against it.
 
 A detector is **its own system prompt + its own tool set + an output schema + a
-trigger** (DESIGN.md §The contract). Adding one is a config entry, never a code
+trigger** (DESIGN.md §The contract). Adding one is a catalogue entry, never a code
 path: there is one fork implementation, instantiated N times and parameterised by
-what is in this file.
+what `load_catalogue` returns — the bundled `detectors.json` beside this module,
+or the file `catalogue.file` points at.
 
-Two things about the system prompt are worth stating where the prompts live.
-It really is the detector's own — but it is sent **after the cache breakpoint**,
-as a second system block, never ahead of the shared window. Put it first and every
-fork's prefix differs, every fork pays full price, and the fan-out's economics
-disappear. Functionally its own prompt; structurally the suffix of one.
+One thing about the system prompt is worth stating where the contract lives: it
+really is the detector's own — but it rides the fork's private message tail,
+after the cache breakpoint, never a system block and never ahead of the shared
+window. Put it earlier and every fork's prefix differs, every fork pays full
+price, and the fan-out's economics disappear (see fork.py's module docstring).
 
 Enablement follows the shipping order rather than the size of the catalogue: v1
 turns on the open-ended `default` plus the two no-tool detectors that prove the
@@ -18,7 +19,9 @@ ships defined and **off**, one `/second-brain-config` away.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .constants import FEEDBACK_TOOL
@@ -90,139 +93,37 @@ OUTCOME_VERDICTS = ("adopted", "partially_adopted", "rejected",
                     "already_handled", "no_evidence", "contradicted")
 
 # ── the catalogue ───────────────────────────────────────────────────────────
-BUILTIN_DETECTORS: dict[str, dict[str, Any]] = {
-    "repeat-failure": {
-        "enabled": True,
-        "pilot": True,          # cheapest and most predictable: it warms the prefix
-        "system": (
-            "You watch for a session burning time on a loop it cannot see.\n"
-            "Advise only when the SAME command or approach has failed three or more times with "
-            "cosmetic variations, or when the agent is retrying something that already failed the "
-            "same way. Cite the failing observations. Everything else is silence."
-        ),
-        "tools": [],
-        "cadence": "every_pass",
-        "confidence_floor": 0.6,
-    },
-    "standard-questions": {
-        "enabled": True,
-        "system": (
-            "You are checking whether the work has answered a fixed set of questions.\n"
-            "Ask only about a question the observation stream does not already answer — if the agent "
-            "ran the tests, the question is answered and you say nothing. If the task looks close to "
-            "done and nothing in the stream ever answers one, that silence is the finding.\n"
-            "You cannot see tool results, only what was run, so ask whether an ACTION occurred — "
-            "never whether it succeeded."
-        ),
-        "tools": [],
-        "cadence": "every_pass",
-        "confidence_floor": 0.6,
-        "config": {
-            "questions": [
-                {"key": "tests_run", "ask": "Were the tests run since the first edit?"},
-                {"key": "tests_added", "ask": "Were tests added for new code paths?"},
-                {"key": "compiles", "ask": "Was a build or type-check run since the edits?"},
-                {"key": "deployed", "ask": "If a version was bumped, was a deploy command run?"},
-                {"key": "docs_updated", "ask": "Was the neighbouring doc updated with the code?"},
-            ],
-        },
-    },
-    "default": {
-        "enabled": True,
-        "system": (
-            "You are watching, not participating.\n"
-            "Speak only when you have something genuinely useful: a mistake about to compound, a "
-            "constraint stated earlier and now contradicted, prior art the agent should see, a "
-            "decision whose cost will only become visible later.\n"
-            "The expected steady state is silence. Do not summarise, do not encourage, do not "
-            "restate what the agent just said, and never advise something it has already done."
-        ),
-        "tools": ["Read", "Grep", "Glob"],
-        "cadence": "every_pass",
-        "confidence_floor": 0.65,
-    },
-    "goal-drift": {
-        "enabled": False,
-        "system": (
-            "You watch for the work drifting off the goal.\n"
-            "The user asked for A; several turns later the work is about B, with no acknowledgment "
-            "that the goal changed. Advise only with both halves cited: what was asked, and what is "
-            "now being done. A user who redirected mid-task is not drift."
-        ),
-        "tools": [],
-        "cadence": "every_nth:2",
-        "confidence_floor": 0.7,
-    },
-    "git-log": {
-        "enabled": False,
-        "system": (
-            "You check whether the area being edited was changed recently, and whether that history "
-            "contradicts what is being done now.\n"
-            "Use the git commands you have on the files in the observation stream. The finding worth "
-            "sending is specific: 'this was rewritten two days ago in <sha>; the thing being re-added "
-            "was deliberately removed'. A file simply having history is not a finding."
-        ),
-        "tools": ["Read", {"exec": [
-            "git log --oneline -20",
-            "git log --oneline -20 --stat",
-            "git status --short",
-        ]}],
-        "cadence": "every_nth:2",
-        "confidence_floor": 0.65,
-    },
-    "prior-art": {
-        "enabled": False,
-        "system": (
-            "You check whether what is being built already exists in this repository.\n"
-            "Search for an existing helper, shared library or sibling implementation before the agent "
-            "finishes rebuilding it. Cite the path. Silence unless you have actually found the thing."
-        ),
-        "tools": ["Read", "Grep", "Glob"],
-        "cadence": "every_nth:3",
-        "confidence_floor": 0.7,
-    },
-    "constraint-drift": {
-        "enabled": False,
-        "system": (
-            "You check the work against the rules this project writes down — CLAUDE.md, AGENTS.md, "
-            "and constraints the user stated earlier in the task.\n"
-            "Quote the rule and the observation that contradicts it. This detector is the most "
-            "false-positive-prone one there is: if you are inferring a rule rather than reading one, "
-            "stay silent."
-        ),
-        "tools": ["Read", "Grep", "Glob"],
-        "cadence": "every_nth:3",
-        "confidence_floor": 0.75,
-    },
-    "static-analysis": {
-        "enabled": False,       # opt-in: it executes
-        "system": (
-            "You determine whether the tree the agent just edited still builds and type-checks.\n"
-            "Run the command you are allowed to run, once, and report only a real failure with the "
-            "compiler's own first error line as evidence. A build you could not run is silence, "
-            "not a finding."
-        ),
-        "tools": [{"exec": []}],   # the workspace supplies its own build command
-        "cadence": "every_nth:4",
-        "deadline_s": 45,
-        "confidence_floor": 0.8,
-    },
-    "cross-task-collision": {
-        "enabled": False,
-        "system": (
-            "Another live session is editing files this task is also editing. The collision itself is "
-            "already established — you are not asked to judge whether it is real, only to write one "
-            "clear line about it.\n"
-            "Say which file, which other task, and which case it is: the same checkout (both agents "
-            "write the same file, later writer wins silently — urgent) or separate worktrees (two "
-            "branches diverging, git will report it at merge time — lower)."
-        ),
-        "tools": [],
-        "cadence": "every_pass",
-        "confidence_floor": 0.6,
-        "structural": True,     # fires on a match the worker computes, not a judgment
-    },
-}
+_BUNDLED_CATALOGUE = Path(__file__).with_name("detectors.json")
+
+
+def load_catalogue(path: str | None = None) -> dict[str, dict[str, Any]]:
+    """The detector catalogue — the source of truth is a JSON file people edit.
+
+    The bundled `detectors.json` beside this module ships the built-ins;
+    `catalogue.file` points at a user's own file, whose entries **replace** the
+    bundle (copy the bundled file to extend it — replacement is predictable,
+    merging resurrects detectors you meant to be rid of). Config overrides
+    (`detectors.<name>.<field>`, global and workspace) still merge on top of
+    whichever catalogue is in force. Any failure to read or parse falls back to
+    the bundle: a broken catalogue must degrade to the shipped one, never to no
+    observer. Re-read on every load, so edits take effect at the next pass
+    boundary like every other configuration change.
+    """
+    candidates = ([Path(path).expanduser()] if path else []) + [_BUNDLED_CATALOGUE]
+    for candidate in candidates:
+        try:
+            loaded = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(loaded, dict) and loaded
+                and all(isinstance(v, dict) for v in loaded.values())):
+            return loaded
+    return {}
+
+
+BUILTIN_DETECTORS: dict[str, dict[str, Any]] = load_catalogue()
+"""The bundled catalogue, as loaded at import — kept for introspection; the
+config layer calls `load_catalogue()` itself so `catalogue.file` can differ."""
 
 
 @dataclass

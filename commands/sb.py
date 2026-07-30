@@ -326,7 +326,8 @@ def cmd_config(argv: list[str]) -> int:
             source = cfg.source(key)
             flag = "  ⚠ changes how loud or costly this is" if key in WARNED else ""
             print(f"     {key.split('.', 1)[1]:<24} {str(value):<28} ({source}){flag}")
-        print("\n   [detectors]")
+        catalogue = str(cfg.get("catalogue.file") or "")
+        print(f"\n   [detectors]  (catalogue: {catalogue or 'bundled detectors.json'})")
         for name, spec in sorted(cfg.group("detectors").items()):
             tools = spec.get("tools") or []
             print(f"     {name:<22} {'on ' if spec.get('enabled') else 'off'}  "

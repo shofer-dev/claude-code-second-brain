@@ -682,3 +682,55 @@ def test_the_statusline_shows_the_last_turn_end_verdict():
                     turn_verdict="all silent", turn_verdict_at=time.time())
     record.save()
     assert "last turn: all silent" in _statusline({"session_id": "s-tv"})
+
+
+# ── the catalogue is a JSON file, and the user can bring their own ──────────
+def test_the_bundled_catalogue_is_the_json_source_of_truth():
+    from second_brain.detectors import load_catalogue
+    catalogue = load_catalogue()
+    assert len(catalogue) == 9
+    assert catalogue["repeat-failure"]["pilot"] is True
+    assert catalogue["default"]["system"].strip()
+
+
+def test_a_user_catalogue_replaces_the_bundle_and_overrides_still_merge(tmp_path):
+    from second_brain.config import GLOBAL, set_value
+
+    mine = tmp_path / "mine.json"
+    mine.write_text(json.dumps({
+        "my-lens": {"enabled": True, "system": "watch for x", "tools": []},
+    }))
+    set_value("catalogue.file", str(mine), scope=GLOBAL)
+    from second_brain.config import set_detector
+    set_detector("my-lens", "deadline_s", "12", scope=GLOBAL)
+
+    cfg = Config.load(None)
+    detectors = cfg.group("detectors")
+    assert set(detectors) == {"my-lens"}               # replacement, not merge
+    assert detectors["my-lens"]["deadline_s"] == 12    # …but overrides still layer
+
+    from second_brain.detectors import enabled, resolve
+    [lens] = enabled(resolve(detectors))
+    assert lens.name == "my-lens" and lens.deadline_s == 12
+
+
+def test_a_catalogue_that_breaks_later_falls_back_to_the_bundle(tmp_path):
+    from second_brain.config import GLOBAL, set_value
+
+    mine = tmp_path / "mine.json"
+    mine.write_text(json.dumps({"my-lens": {"enabled": True, "system": "x"}}))
+    set_value("catalogue.file", str(mine), scope=GLOBAL)
+    mine.write_text("not json any more")               # breaks AFTER validation
+    detectors = Config.load(None).group("detectors")
+    assert "repeat-failure" in detectors               # the bundle, not nothing
+
+
+def test_a_bad_catalogue_path_is_refused_at_set_time(tmp_path):
+    from second_brain.config import GLOBAL, set_value
+
+    with pytest.raises(ConfigError):
+        set_value("catalogue.file", str(tmp_path / "missing.json"), scope=GLOBAL)
+    with pytest.raises(ConfigError):
+        bad = tmp_path / "bad.json"
+        bad.write_text('["not", "a", "mapping"]')
+        set_value("catalogue.file", str(bad), scope=GLOBAL)

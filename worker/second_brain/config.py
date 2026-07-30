@@ -65,15 +65,26 @@ class Config:
     # ── loading ─────────────────────────────────────────────────────────────
     @classmethod
     def load(cls, workspace: str | None = None) -> Config:
-        from .detectors import BUILTIN_DETECTORS  # local: detectors import config
+        from .detectors import load_catalogue  # local: detectors would import back
+
+        # Two-phase: the catalogue file is itself a config value, so the raw
+        # layers are read first to find it, and only then is the built-in layer
+        # constructed around whichever catalogue is in force (workspace wins).
+        global_layer = _read_json(paths.config_path())
+        workspace_layer = _read_json(paths.workspace_config_path(workspace)) if workspace else {}
+        catalogue_file = ""
+        for layer in (global_layer, workspace_layer):
+            section = layer.get("catalogue")
+            value = section.get("file") if isinstance(section, dict) else None
+            if isinstance(value, str) and value.strip():
+                catalogue_file = value.strip()
 
         builtin = copy.deepcopy(DEFAULTS)
-        builtin["detectors"] = copy.deepcopy(BUILTIN_DETECTORS)
+        builtin["detectors"] = load_catalogue(catalogue_file or None)
 
-        layers: list[tuple[str, dict[str, Any]]] = [(BUILTIN, builtin)]
-        layers.append((GLOBAL, _read_json(paths.config_path())))
+        layers: list[tuple[str, dict[str, Any]]] = [(BUILTIN, builtin), (GLOBAL, global_layer)]
         if workspace:
-            layers.append((WORKSPACE, _read_json(paths.workspace_config_path(workspace))))
+            layers.append((WORKSPACE, workspace_layer))
 
         values: dict[str, Any] = {}
         sources: dict[str, str] = {}
@@ -173,9 +184,32 @@ def _target(scope: str, workspace: str | None) -> Path:
     return paths.config_path()
 
 
+def _validate_catalogue_file(path_text: str) -> None:
+    """Refuse to store a catalogue path that cannot serve as one RIGHT NOW.
+
+    Load-time already falls back to the bundle on failure, but a silently
+    ignored setting is worse than a rejected one: the person believes their
+    detectors are in force while the bundled ones run.
+    """
+    target = Path(path_text).expanduser()
+    try:
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ConfigError(f"catalogue.file: cannot read {target}: {exc}") from exc
+    except ValueError as exc:
+        raise ConfigError(f"catalogue.file: {target} is not valid JSON: {exc}") from exc
+    if (not isinstance(loaded, dict) or not loaded
+            or not all(isinstance(v, dict) for v in loaded.values())):
+        raise ConfigError(
+            "catalogue.file: expected a JSON object mapping detector names to definitions — "
+            "copy the bundled worker/second_brain/detectors.json as a starting point")
+
+
 def set_value(dotted: str, raw: Any, *, scope: str = WORKSPACE, workspace: str | None = None) -> Any:
     """Validate and persist one knob. Returns the stored value."""
     value = coerce(dotted, raw)
+    if dotted == "catalogue.file" and str(value).strip():
+        _validate_catalogue_file(str(value))
     group, _, key = dotted.partition(".")
     path = _target(scope, workspace)
     data = _read_json(path)

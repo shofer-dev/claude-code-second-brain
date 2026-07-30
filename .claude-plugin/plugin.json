@@ -1,6 +1,6 @@
 {
   "name": "second-brain",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A cheap background model that watches your Claude Code session over its shoulder and, rarely, drops one short advisory into it — asynchronously, without ever blocking. It reads only the agent's emissions (~29% of the transcript), never its tool results, so it is affordable to leave running for the whole session.",
   "author": { "name": "shofer.dev" },
   "homepage": "https://github.com/shofer-dev/claude-code-second-brain",

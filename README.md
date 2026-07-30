@@ -93,6 +93,10 @@ Muting and debugging are configuration, not commands:
 /second-brain-config set debug.enabled true                # capture, per pass, the digest and
                                                            # every detector's whole loop under
                                                            # /tmp/second-brain/<session>/<pass>/
+/second-brain-config set catalogue.file ~/my-detectors.json  # bring your own detector catalogue:
+                                                           # copy the bundled detectors.json,
+                                                           # edit, point here — it replaces the
+                                                           # bundle; overrides still merge on top
 ```
 
 ### Reading status without spending a model turn

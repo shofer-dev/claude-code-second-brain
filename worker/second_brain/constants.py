@@ -145,6 +145,11 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "enabled": False,
         "path": "/tmp/second-brain",
     },
+    # The detector catalogue. Empty file = the bundled detectors.json beside
+    # detectors.py; a path REPLACES the bundle wholesale (copy it to extend).
+    "catalogue": {
+        "file": "",
+    },
 }
 
 # Detector definitions are a map, not a fixed set of knobs, so they carry their
@@ -333,6 +338,12 @@ SPEC: dict[str, dict[str, Any]] = {
                               "(input, tool calls, final output) to files."},
     "debug.path": {"type": _STR,
                    "help": "Where captures land: <path>/<session>/<pass>/{digest.txt, <detector>.txt}."},
+
+    "catalogue.file": {"type": _STR,
+                       "help": "Path to your own detector catalogue (JSON). It REPLACES the "
+                               "bundled detectors.json wholesale — copy that file to extend it. "
+                               "Validated when set; a file that later breaks falls back to the "
+                               "bundle. detectors.<name>.<field> overrides still merge on top."},
 }
 
 # Knobs whose change gets an explicit warning in the command's output.
