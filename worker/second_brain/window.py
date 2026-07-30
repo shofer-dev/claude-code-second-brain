@@ -176,6 +176,31 @@ class Window:
                 log.warning("compaction summary failed: %s", exc)
             return ""
 
+    # ── the debug flush ─────────────────────────────────────────────────────
+    def render_digest(self, *, session_id: str, task_id: str, pass_number: int) -> str:
+        """The digest, verbatim, for `/second-brain-debug` — a pure string join.
+
+        Purely mechanical: no model call, no pass, no interpretation. This is
+        exactly the shared prefix every fork of the next pass would receive —
+        system block, ledger block, then every window block in order, ending at
+        the cache breakpoint. Per-fork tails are deliberately absent: they are
+        per-detector and exist only for the milliseconds a fork is in flight.
+        """
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        header = (
+            f"# Second Brain digest\n"
+            f"# session {session_id} · task {task_id} · after pass {pass_number}\n"
+            f"# {self.chars:,} chars ({self.fill * 100:.0f}% of budget) · "
+            f"{self.compactions} compaction(s) · written {stamp}\n"
+            f"# Everything below is the byte-identical shared prefix of every detector fork.\n"
+        )
+        parts = [header,
+                 "════════ system ════════", self._system[0]["text"],
+                 "════════ window ════════", self._ledger_block["text"]]
+        parts.extend(block["text"] for block in self._blocks)
+        parts.append("──────── cache breakpoint — per-fork tails follow at pass time ────────")
+        return "\n\n".join(parts) + "\n"
+
     def refresh_ledger_block(self) -> None:
         """Re-render the ledger block. Only ever called as part of a compaction."""
         self._ledger_block = _text(self._render_ledger())

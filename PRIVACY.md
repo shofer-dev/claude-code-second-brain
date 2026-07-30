@@ -81,6 +81,7 @@ port; there is no remote mode.
 | `history/<task>.jsonl` | every gate decision, for `/second-brain-why` | with the task |
 | `index/<workspace>.jsonl` | live cross-task paths and timestamps | `index.ttl_s` (15 min) |
 | `status/<session>.json` | the numbers `/second-brain-stats` reads | overwritten each pass |
+| `window/<session>.md` | the digest — the observer's context window, verbatim, for `/second-brain-debug` | overwritten on each window change |
 | `offsets/`, `state/`, `control/`, `finish-gate/` | transcript cursors, session→task binding, mutes, finish-gate budget | the session or task |
 | `config.json`, `workspaces/<hash>.json` | your configuration | until changed |
 | `second-brain.log` | the worker's log | appended |

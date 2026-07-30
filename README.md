@@ -80,6 +80,7 @@ is still worth a person's glance, and it is free.
 | `/second-brain-stats` | Observed vs dropped volume per tool, pass latency, window fill, token use and budget headroom, advisories generated / gated / delivered, and **uptake per detector** |
 | `/second-brain-run` | **Ask it to look now** — catches up from the transcript, runs one pass, prints every detector's verdict and any advisory. Bypasses the pass throttle, not the mute or the budget. The fastest way to see it work |
 | `/second-brain-why` | The recent advisories with their evidence and adjudicated verdicts — **and the ones the gate dropped, with the reason** |
+| `/second-brain-debug` | Where the digest — the observer's context window — is flushed on disk, verbatim and current; optionally copies it to a path you name. Purely mechanical: the worker write-throughs the window on every change, no model call involved |
 | `/second-brain-config` | Every threshold, cap and interval, with the layer each value came from; `set` validates before writing and running workers pick it up at the next pass boundary |
 | `/second-brain-mute` | Silence everything, this workspace, or one detector, optionally for a duration. A mute stops passes and delivery — nothing leaves the machine — while observation continues locally, so an unmute resumes without a gap |
 | `/second-brain-unmute` | Undo it |

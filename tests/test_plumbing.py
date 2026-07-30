@@ -566,3 +566,28 @@ def test_the_statusline_flags_a_stale_worker():
     stored["updated_at"] = time.time() - 3600
     paths.write_private(paths.status_path("s-stale"), json.dumps(stored))
     assert "stale" in _statusline({"session_id": "s-stale"})
+
+
+# ── the digest flush (`/second-brain-debug`) ────────────────────────────────
+def test_render_digest_is_the_shared_prefix_verbatim_and_mechanical(cfg):
+    """The flush is a pure string join over the window's blocks — no model, no
+    interpretation, and deterministic apart from its own timestamp line."""
+    from second_brain.ledger import Ledger
+    from second_brain.projection import TEXT, Observation
+    from second_brain.window import Window
+
+    ledger = Ledger(task_id="t-dump", workspace="/repo", goal="probes")
+    window = Window(cfg, ledger, "/repo")
+    window.append_episode([Observation(kind=TEXT, body="hello narration")], 1)
+
+    text = window.render_digest(session_id="s-dump", task_id="t-dump", pass_number=1)
+    assert "hello narration" in text                 # the episode, verbatim
+    assert "task ledger" in text
+    assert "cache breakpoint" in text
+    assert "after pass 1" in text
+
+    def body(rendered: str) -> str:
+        return "\n".join(l for l in rendered.splitlines() if not l.startswith("# "))
+
+    again = window.render_digest(session_id="s-dump", task_id="t-dump", pass_number=1)
+    assert body(again) == body(text)

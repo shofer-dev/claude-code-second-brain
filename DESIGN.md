@@ -1830,9 +1830,18 @@ plus everything below, which is deliberately kept out of the model's context:
 - **`/second-brain-why`** — the last advisories with their evidence chains **and their
   adjudicated verdicts**, plus the last few that were *gated*, with the reason. The gate's
   decisions must be inspectable or nobody will trust the channel.
+- **`/second-brain-debug`** — where the digest (the observer's context window) is flushed on
+  disk, with its size, age, and how much observed content is spooled but not yet in it; an
+  optional argument copies it to a path of your choosing. Purely mechanical: the worker
+  write-throughs the window's exact bytes to `window/<session>.md` whenever the window
+  changes — a string join, no model call, no pass — so the command only ever reads a file,
+  and the digest stays inspectable after the worker has exited. What you see is the
+  byte-identical shared prefix every fork of the next pass would receive, ending at the
+  cache breakpoint.
 - **`/second-brain-config`** — every threshold and cap, live (§Configuration).
 - **`/second-brain-mute`** — this task, this workspace, or a named detector, with an optional
   duration.
+- **`/second-brain-unmute`** — undo any of those.
 - **`/second-brain-forget`** — drop a task ledger, a workspace's ledgers, or all of them.
 - **statusline segment** — a quiet indicator: watching / thinking / muted / cost,
   rendered by the harness running one command. **This is the only surface that costs
@@ -1848,6 +1857,7 @@ running:
 | Command | Mechanism |
 |---|---|
 | `stats`, `why` | Read the status file the worker writes through on every pass, plus the advice history and ledger index. Stale-but-readable when no worker runs, and it says so with the timestamp |
+| `debug` | Read the window dump the worker writes through on every window change — the same write-through pattern as the status file, carrying content instead of numbers |
 | `config` | Write `config.json`; running workers re-read it at their next pass boundary |
 | `mute`, `forget` | Write a control file the worker checks each pass; `forget` also unlinks ledgers directly, so it works with nothing running |
 | statusline | Reads the same status file — cheap enough to poll, and absent means "not watching", which is the honest display |

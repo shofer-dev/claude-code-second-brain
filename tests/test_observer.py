@@ -361,3 +361,25 @@ def test_a_replayed_control_signal_cannot_change_state(observer):
     # A fresh signal of the same kind is still honoured.
     observer._ingest([Observation(kind=META, ts=time.time(), body="stop", meta={"event": "stop"})])
     assert observer.turn_stopped is True
+
+
+# ── the digest flush (`/second-brain-debug`) ────────────────────────────────
+def test_the_digest_is_flushed_to_disk_whenever_the_window_changes(observer):
+    """Write-through, not request/response: the worker flushes its window bytes
+    mechanically after any change, and an idle tick rewrites nothing."""
+    from second_brain import paths
+
+    observer.provider = FakeProvider({"*": [_silent()]})
+    feed("s-obs", text(), tool())
+    tick(observer)
+
+    dump = paths.window_dump_path("s-obs")
+    assert dump.exists()
+    content = dump.read_text(encoding="utf-8")
+    assert "adding the health trio" in content        # the episode, verbatim
+    assert "repeat-failure → silent" in content       # merged feedback included
+    assert "cache breakpoint" in content
+
+    before = dump.stat().st_mtime_ns
+    tick(observer)                                    # nothing new: no window change…
+    assert dump.stat().st_mtime_ns == before          # …so no rewrite

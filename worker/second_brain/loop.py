@@ -161,6 +161,7 @@ class Observer:
         self.last_index_compact = 0.0
         self.last_sweep = 0.0
         self.last_status = 0.0
+        self.last_dump_signature: tuple[int, int, int] = (-1, -1, -1)
 
     # ── the main loop ───────────────────────────────────────────────────────
     async def run(self) -> None:
@@ -231,7 +232,28 @@ class Observer:
 
         if self._pass_due():
             await self._run_pass()
+        self._dump_window()
         await self._push()
+
+    def _dump_window(self) -> None:
+        """Write-through the digest whenever it changed — mechanical, no model.
+
+        The window is the one piece of live state a person cannot otherwise see
+        (`/second-brain-debug` reads this file). A signature guard keeps the
+        idle path free: ticks that did not touch the window write nothing.
+        """
+        signature = (id(self.window), self.window.chars, self.window.compactions)
+        if signature == self.last_dump_signature:
+            return
+        self.last_dump_signature = signature
+        try:
+            paths.write_private(
+                paths.window_dump_path(self.session_id),
+                self.window.render_digest(session_id=self.session_id,
+                                          task_id=self.binding.task_id,
+                                          pass_number=self.pass_number))
+        except OSError as exc:
+            self.log.warning("window dump failed: %s", exc)
 
     # ── ingestion ───────────────────────────────────────────────────────────
     def _ingest(self, observations: list[Observation]) -> None:

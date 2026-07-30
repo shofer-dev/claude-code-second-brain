@@ -211,6 +211,16 @@ def workspace_control_path(workspace: str) -> Path:
     return data_dir() / "control" / f"ws-{slug(workspace)}.json"
 
 
+def window_dump_path(session_id: str) -> Path:
+    """The worker's write-through copy of its window, for `/second-brain-debug`.
+
+    Written mechanically whenever the window changes — no model involved — so
+    the command only ever reads a file, and the digest stays inspectable even
+    after the worker has exited.
+    """
+    return data_dir() / "window" / f"{safe_name(session_id)}.md"
+
+
 def config_path() -> Path:
     return data_dir() / "config.json"
 
