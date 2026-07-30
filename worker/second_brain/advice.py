@@ -92,7 +92,7 @@ class Advisory:
         return (
             f"🧠 Second Brain · {self.kind} (confidence {self.confidence:.2f})\n"
             f"{self._text(headline_cap, body_cap)}\n"
-            f"— mute with `/second-brain-mute {self.kind}`"
+            f"— mute with `/second-brain-config set detectors.{self.kind}.enabled false`"
         )
 
     def for_user_only(self, headline_cap: int = 160, body_cap: int = 700) -> str:

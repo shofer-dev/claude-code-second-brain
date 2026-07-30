@@ -74,43 +74,28 @@ class Decision:
 
 
 class Mute:
-    """The user's control file, re-read every pass rather than cached."""
+    """The mute flag, re-read from live configuration rather than cached.
+
+    `mute.all` at the workspace layer silences one workspace; at the global
+    layer, everything. A single detector is muted by disabling it
+    (`detectors.<name>.enabled false`), which stops its forks entirely — so
+    there is no per-detector check here. Muting stops passes and delivery;
+    observation continues locally, so an unmute resumes without a gap.
+    """
 
     def __init__(self, task_id: str, workspace: str) -> None:
         self.task_id = task_id
         self.workspace = workspace
 
-    def _read(self) -> dict[str, Any]:
-        merged: dict[str, Any] = {}
-        for path in (paths.workspace_control_path(self.workspace), paths.control_path(self.task_id)):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if isinstance(data, dict):
-                merged.update(data)
-        return merged
-
-    def muted(self, detector: str) -> str:
-        """Empty string if not muted, else the reason to record."""
-        data = self._read()
-        now = time.time()
-        until = float(data.get("all_until", 0) or 0)
-        if data.get("all") or until > now:
-            return "muted (all)"
-        detectors = data.get("detectors") or {}
-        if isinstance(detectors, dict):
-            entry = detectors.get(detector)
-            if entry is True:
-                return f"muted ({detector})"
-            if isinstance(entry, (int, float)) and entry > now:
-                return f"muted ({detector} until {time.strftime('%H:%M', time.localtime(entry))})"
-        return ""
-
     def observing(self) -> bool:
-        """Muting stops observation, not just advice — usually the point of muting."""
-        data = self._read()
-        return not (data.get("all") or float(data.get("all_until", 0) or 0) > time.time())
+        """Re-loads the config on every call so a mute flip takes effect within
+        one tick, not one pass — a muted worker runs no passes, so a
+        pass-boundary reload would never see the unmute."""
+        try:
+            return not bool(Config.load(self.workspace).get("mute.all", False))
+        except Exception:                                          # noqa: BLE001
+            # Fail open: a broken config file must not silence the observer.
+            return True
 
 
 class Gate:
@@ -142,10 +127,9 @@ class Gate:
         if not feedback.evidence:
             return self._drop(feedback, "no evidence cited")
 
-        muted = self.mute.muted(feedback.detector)
-        if muted:
-            return self._drop(feedback, muted)
-
+        # No mute check here: `mute.all` stops the pass before any fork runs,
+        # and a muted single detector (`detectors.<name>.enabled false`) never
+        # forks — so nothing muted can reach the gate.
         key = feedback.dedup_key or feedback.headline[:60]
         if key in self.ledger.suppressed:
             return self._drop(feedback, f"suppressed ({self.ledger.suppressed[key]})")

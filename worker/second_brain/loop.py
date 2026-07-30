@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from . import fork as forkmod
@@ -161,7 +162,6 @@ class Observer:
         self.last_index_compact = 0.0
         self.last_sweep = 0.0
         self.last_status = 0.0
-        self.last_dump_signature: tuple[int, int, int] = (-1, -1, -1)
 
     # ── the main loop ───────────────────────────────────────────────────────
     async def run(self) -> None:
@@ -232,28 +232,7 @@ class Observer:
 
         if self._pass_due():
             await self._run_pass()
-        self._dump_window()
         await self._push()
-
-    def _dump_window(self) -> None:
-        """Write-through the digest whenever it changed — mechanical, no model.
-
-        The window is the one piece of live state a person cannot otherwise see
-        (`/second-brain-debug` reads this file). A signature guard keeps the
-        idle path free: ticks that did not touch the window write nothing.
-        """
-        signature = (id(self.window), self.window.chars, self.window.compactions)
-        if signature == self.last_dump_signature:
-            return
-        self.last_dump_signature = signature
-        try:
-            paths.write_private(
-                paths.window_dump_path(self.session_id),
-                self.window.render_digest(session_id=self.session_id,
-                                          task_id=self.binding.task_id,
-                                          pass_number=self.pass_number))
-        except OSError as exc:
-            self.log.warning("window dump failed: %s", exc)
 
     # ── ingestion ───────────────────────────────────────────────────────────
     def _ingest(self, observations: list[Observation]) -> None:
@@ -489,8 +468,19 @@ class Observer:
         self.status.save()
         snapshot = self.window.snapshot()
         started = time.monotonic()
+        capture = self._capture_dir()
+        if capture is not None:
+            self._capture(capture / "digest.txt",
+                          self.window.render_digest(session_id=self.session_id,
+                                                    task_id=self.binding.task_id,
+                                                    pass_number=self.pass_number))
 
         results = await self._fan_out(detectors, snapshot, has_new=episode_chars > 0)
+        if capture is not None:
+            for feedback in results:
+                self._capture(capture / f"{paths.safe_name(feedback.detector)}.txt",
+                              feedback.trace + "\n\n--- final output ---\n"
+                              + feedback.dump() + "\n")
 
         # Only the loop writes to the window, after the fan-out returns, in
         # detector-name order — not completion order, so a replay of the same
@@ -506,6 +496,25 @@ class Observer:
         if self.window.needs_compaction():
             await self.window.compact(self.provider, self.log)
         self._save_status(time.monotonic() - started, trigger)
+
+    def _capture_dir(self) -> Path | None:
+        """Where this pass's debug capture lands, or None when capture is off.
+
+        `<debug.path>/<session>/<pass>/` — digest.txt is the shared prefix every
+        fork received; `<detector>.txt` is that fork's whole loop. Purely
+        mechanical: the files are strings the worker holds anyway, and no model
+        is involved in producing them.
+        """
+        if not self.cfg.get("debug.enabled", False):
+            return None
+        root = str(self.cfg.get("debug.path", "") or "/tmp/second-brain")
+        return Path(root) / paths.safe_name(self.session_id) / str(self.pass_number)
+
+    def _capture(self, path: Path, text: str) -> None:
+        try:
+            paths.write_private(path, text)
+        except OSError as exc:
+            self.log.warning("debug capture failed for %s: %s", path, exc)
 
     def _connect(self) -> bool:
         from .provider import ProviderError, make_provider

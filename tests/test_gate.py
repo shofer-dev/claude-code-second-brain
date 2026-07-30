@@ -157,19 +157,25 @@ def test_a_resolved_finding_is_pulled_before_it_lands(gate):
 
 
 # ── mute ────────────────────────────────────────────────────────────────────
-def test_muting_a_detector_silences_only_that_detector(gate, tmp_path):
-    from second_brain import paths
-    paths.write_private(paths.control_path("t-test"),
-                        '{"detectors": {"standard-questions": true}}')
-    assert gate.consider(advise(detector="standard-questions")) is None
-    assert gate.consider(advise(detector="default", key="other",
-                                headline="unrelated finding about manifests")) is not None
+def test_muting_everything_is_a_live_config_flag(gate):
+    from second_brain.config import GLOBAL, set_value
+    assert gate.mute.observing() is True
+    set_value("mute.all", "true", scope=GLOBAL)
+    assert gate.mute.observing() is False              # picked up without a restart
+    set_value("mute.all", "false", scope=GLOBAL)
+    assert gate.mute.observing() is True
 
 
-def test_muting_everything_stops_observation_too(gate):
-    from second_brain import paths
-    paths.write_private(paths.control_path("t-test"), '{"all": true}')
-    assert gate.mute.observing() is False
+def test_muting_one_detector_is_disabling_it(gate):
+    """There is no per-detector mute channel: `detectors.<name>.enabled false`
+    stops that detector's forks entirely, which is stronger and cheaper than
+    suppressing its findings at the gate."""
+    from second_brain.config import GLOBAL, set_detector
+    from second_brain.detectors import enabled, resolve
+    set_detector("standard-questions", "enabled", "false", scope=GLOBAL)
+    names = {d.name for d in enabled(resolve(Config.load(None).group("detectors")))}
+    assert "standard-questions" not in names
+    assert gate.mute.observing() is True               # everything else keeps running
 
 
 # ── the frame is a control, not a courtesy ──────────────────────────────────
@@ -191,7 +197,7 @@ def test_both_addressees_get_the_same_words():
                         evidence=["e8ac6d7"])
     assert advisory.headline in advisory.for_agent()
     assert advisory.headline in advisory.for_user()
-    assert "/second-brain-mute git-log" in advisory.for_user()
+    assert "detectors.git-log.enabled false" in advisory.for_user()
 
 
 def test_history_records_every_decision(gate):

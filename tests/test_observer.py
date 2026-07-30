@@ -93,7 +93,7 @@ def test_the_monitor_pushes_and_the_push_is_observed_as_delivery(observer):
     pushed = observer.emitted[0]                      # type: ignore[attr-defined]
     assert "tests never ran" in pushed
     assert "Second Brain advisory" in pushed          # the agent's framed copy …
-    assert "/second-brain-mute" in pushed             # … and the user's, in one line
+    assert "detectors.default.enabled false" in pushed   # … and the user's, in one line
     assert mailbox.peek("s-obs") == []                # claimed exactly once
 
 
@@ -363,23 +363,39 @@ def test_a_replayed_control_signal_cannot_change_state(observer):
     assert observer.turn_stopped is True
 
 
-# ── the digest flush (`/second-brain-debug`) ────────────────────────────────
-def test_the_digest_is_flushed_to_disk_whenever_the_window_changes(observer):
-    """Write-through, not request/response: the worker flushes its window bytes
-    mechanically after any change, and an idle tick rewrites nothing."""
-    from second_brain import paths
+# ── the debug capture (`debug.enabled`) ─────────────────────────────────────
+def test_debug_capture_writes_the_digest_and_each_forks_whole_loop(observer, tmp_path):
+    """`debug.enabled` captures, per pass, the digest every fork shared and each
+    detector's full loop — input tail, tool calls with their results, and the
+    final output. Purely mechanical: strings the worker held anyway."""
+    from second_brain.config import GLOBAL, set_value
+    from tests.test_fork import _tool_then_silent
+
+    root = tmp_path / "capture"
+    set_value("debug.enabled", "true", scope=GLOBAL)
+    set_value("debug.path", str(root), scope=GLOBAL)
+    observer.provider = FakeProvider({"*": _tool_then_silent()})
+    feed("s-obs", text(), tool())
+    tick(observer)
+
+    pass_dir = root / "s-obs" / "1"
+    digest = (pass_dir / "digest.txt").read_text(encoding="utf-8")
+    assert "adding the health trio" in digest          # the episode, verbatim
+    assert "cache breakpoint" in digest
+
+    trace = (pass_dir / "default.txt").read_text(encoding="utf-8")
+    assert "--- input:" in trace                       # the fork's private tail
+    assert "You are the 'default' detector" in trace
+    assert "[tool_use] Read" in trace                  # the loop, call by call
+    assert "[tool_result Read]" in trace
+    assert "--- final output ---" in trace
+    assert "verdict: silent" in trace
+
+
+def test_debug_capture_is_off_by_default(observer):
+    from pathlib import Path
 
     observer.provider = FakeProvider({"*": [_silent()]})
     feed("s-obs", text(), tool())
     tick(observer)
-
-    dump = paths.window_dump_path("s-obs")
-    assert dump.exists()
-    content = dump.read_text(encoding="utf-8")
-    assert "adding the health trio" in content        # the episode, verbatim
-    assert "repeat-failure → silent" in content       # merged feedback included
-    assert "cache breakpoint" in content
-
-    before = dump.stat().st_mtime_ns
-    tick(observer)                                    # nothing new: no window change…
-    assert dump.stat().st_mtime_ns == before          # …so no rewrite
+    assert not (Path("/tmp/second-brain") / "s-obs").exists()

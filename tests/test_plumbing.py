@@ -421,12 +421,13 @@ def test_detector_overrides_merge_rather_than_replace():
     assert spec["tools"]
 
 
-def test_muting_is_readable_without_a_worker():
+def test_muting_is_settable_without_a_worker():
+    """The mute is configuration, so setting it needs no running worker — and a
+    worker that IS running picks it up on its next tick, not its next pass."""
+    from second_brain.config import GLOBAL, set_value
     from second_brain.gate import Mute
-    paths.write_private(paths.control_path("t-1"),
-                        json.dumps({"detectors": {"default": time.time() + 600}}))
-    assert "default" in Mute("t-1", "/w").muted("default")
-    assert Mute("t-1", "/w").muted("git-log") == ""
+    set_value("mute.all", "true", scope=GLOBAL)
+    assert Mute("t-1", "/w").observing() is False
 
 
 def test_the_spool_offset_survives_a_worker_restart():
@@ -568,7 +569,7 @@ def test_the_statusline_flags_a_stale_worker():
     assert "stale" in _statusline({"session_id": "s-stale"})
 
 
-# ── the digest flush (`/second-brain-debug`) ────────────────────────────────
+# ── the digest render (the debug capture's digest.txt) ──────────────────────
 def test_render_digest_is_the_shared_prefix_verbatim_and_mechanical(cfg):
     """The flush is a pure string join over the window's blocks — no model, no
     interpretation, and deterministic apart from its own timestamp line."""
@@ -584,7 +585,7 @@ def test_render_digest_is_the_shared_prefix_verbatim_and_mechanical(cfg):
     assert "hello narration" in text                 # the episode, verbatim
     assert "task ledger" in text
     assert "cache breakpoint" in text
-    assert "after pass 1" in text
+    assert "digest for pass 1" in text
 
     def body(rendered: str) -> str:
         return "\n".join(l for l in rendered.splitlines() if not l.startswith("# "))

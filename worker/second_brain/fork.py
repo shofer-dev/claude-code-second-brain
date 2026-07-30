@@ -35,6 +35,7 @@ get cut, losing whichever part happened to be last.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -74,6 +75,39 @@ class Feedback:
     error: str = ""
     timed_out: bool = False
     elapsed_s: float = 0.0
+    trace: str = ""
+    """The fork's whole loop — input tail, model replies, tool calls and their
+    results — for the debug capture. Never enters the window; discarded with the
+    Feedback unless `debug.enabled` persists it."""
+
+    def dump(self) -> str:
+        """The final output, rendered for the debug capture file."""
+        lines = [f"verdict: {self.verdict}"]
+        if self.headline:
+            lines.append(f"headline: {self.headline}")
+        if self.body:
+            lines.append(f"body: {self.body}")
+        lines.extend(f"evidence: {e}" for e in self.evidence)
+        if self.confidence:
+            lines.append(f"confidence: {self.confidence:.2f}")
+        if self.dedup_key:
+            lines.append(f"dedup_key: {self.dedup_key}")
+        if self.stale_if:
+            lines.append(f"stale_if: {', '.join(self.stale_if)}")
+        if self.finish_gate:
+            lines.append("finish_gate: true")
+        lines.extend(f"outcome: {o.advice_id} → {o.verdict}"
+                     + (f" ({'; '.join(o.evidence)})" if o.evidence else "")
+                     for o in self.outcomes)
+        if self.error:
+            lines.append(f"error: {self.error}")
+        if self.timed_out:
+            lines.append("timed out: cancelled at the hard deadline (its loop died with it, "
+                         "so there is no trace)")
+        lines.append(f"usage: in {self.usage.input_tokens} · out {self.usage.output_tokens} · "
+                     f"cache read {self.usage.cache_read} · cache write {self.usage.cache_write} "
+                     f"· {self.tool_calls} tool call(s) · {self.elapsed_s:.2f}s")
+        return "\n".join(lines)
 
     def line(self, pass_number: int) -> str:
         """The one compact line merged back into Window B."""
@@ -176,6 +210,15 @@ async def run(detector: Detector, snapshot: Snapshot, *, provider: Any, toolbox:
     usage = Usage()
     tool_calls = 0
     checked: list[str] = []
+    # The loop, recorded as it happens — string appends, nothing more. It rides
+    # the Feedback out of the fork so the debug capture can persist it; it is
+    # never merged into the window (only `line()` is).
+    trace = ["--- input: this fork's private tail, appended after the shared digest ---",
+             tail["text"]]
+
+    def _traced(feedback: Feedback) -> Feedback:
+        feedback.trace = "\n\n".join(trace)
+        return feedback
 
     budget = max(1, max_iterations)
     for iteration in range(budget):
@@ -186,6 +229,8 @@ async def run(detector: Detector, snapshot: Snapshot, *, provider: Any, toolbox:
         # array: changing the tools array invalidates the whole prefix cache,
         # while tool_choice costs only the messages tier of this one request.
         force = FEEDBACK_TOOL if iteration == budget - 1 else ""
+        trace.append(f"--- iteration {iteration + 1}"
+                     + (" (verdict forced via tool_choice)" if force else "") + " ---")
         try:
             reply: Reply = await provider.send(
                 system=system, messages=messages, tools=tools,
@@ -193,9 +238,15 @@ async def run(detector: Detector, snapshot: Snapshot, *, provider: Any, toolbox:
                 force_tool=force,
             )
         except ProviderError as exc:
-            return Feedback(detector=detector.name, error=str(exc), usage=usage,
-                            elapsed_s=time.monotonic() - started)
+            trace.append(f"[provider error] {exc}")
+            return _traced(Feedback(detector=detector.name, error=str(exc), usage=usage,
+                                    elapsed_s=time.monotonic() - started))
         usage = usage + reply.usage
+        if reply.text.strip():
+            trace.append("[model text]\n" + reply.text.strip())
+        for call in reply.tool_calls:
+            trace.append(f"[tool_use] {call.name} "
+                         + json.dumps(call.input, ensure_ascii=False, default=str))
 
         feedback_call = next((c for c in reply.tool_calls if c.name == FEEDBACK_TOOL), None)
         if feedback_call is not None:
@@ -204,21 +255,22 @@ async def run(detector: Detector, snapshot: Snapshot, *, provider: Any, toolbox:
             feedback.tool_calls = tool_calls
             feedback.checked = checked
             feedback.elapsed_s = time.monotonic() - started
-            return feedback
+            return _traced(feedback)
 
         if not reply.tool_calls:
             # A fork that answered in prose gave no verdict. Treat as silence: the
             # schema is the contract, and inventing a finding out of free text is
             # exactly the unchecked path the schema exists to close.
-            return Feedback(detector=detector.name, verdict="silent", usage=usage,
-                            tool_calls=tool_calls, checked=checked,
-                            elapsed_s=time.monotonic() - started)
+            return _traced(Feedback(detector=detector.name, verdict="silent", usage=usage,
+                                    tool_calls=tool_calls, checked=checked,
+                                    elapsed_s=time.monotonic() - started))
 
         results = []
         for call in reply.tool_calls:
             tool_calls += 1
             output = await toolbox.dispatch(call.name, call.input, detector.grant)
             checked.append(f"{call.name} {str(list(call.input.values())[:1])[:60]}")
+            trace.append(f"[tool_result {call.name}]\n{output}")
             results.append({"type": "tool_result", "tool_use_id": call.id, "content": output})
         # Tool results stay in THIS fork's list and are discarded when it returns.
         messages = [
@@ -233,9 +285,9 @@ async def run(detector: Detector, snapshot: Snapshot, *, provider: Any, toolbox:
 
     if log:
         log.info("%s hit its iteration cap without answering", detector.name)
-    return Feedback(detector=detector.name, verdict="silent", usage=usage,
-                    tool_calls=tool_calls, checked=checked,
-                    error="iteration cap", elapsed_s=time.monotonic() - started)
+    return _traced(Feedback(detector=detector.name, verdict="silent", usage=usage,
+                            tool_calls=tool_calls, checked=checked,
+                            error="iteration cap", elapsed_s=time.monotonic() - started))
 
 
 async def run_with_deadline(detector: Detector, snapshot: Snapshot, *, hard_deadline_s: float,

@@ -9,7 +9,12 @@ instead of pretending to be live (DESIGN.md §Human surfaces).
 
 Everything printed here is for the human. None of it enters the model's context.
 
-Usage: sb.py <stats|why|run|debug|config|mute|unmute|forget> [args…]
+Usage: sb.py <stats|why|run|config|forget> [args…]
+
+Muting and debug capture are configuration, not commands:
+  /second-brain-config set mute.all true                    # silence (unset with false)
+  /second-brain-config set detectors.<name>.enabled false   # mute one detector
+  /second-brain-config set debug.enabled true               # capture digest + fork loops
 """
 from __future__ import annotations
 
@@ -233,52 +238,6 @@ def cmd_run(argv: list[str]) -> int:
     return 1
 
 
-# ── debug ───────────────────────────────────────────────────────────────────
-def cmd_debug(argv: list[str]) -> int:
-    """Show where the digest (the observer's context window) is flushed on disk.
-
-    Nothing here talks to a worker and nothing involves a model: the worker
-    write-throughs its window to a file whenever the window changes, so this
-    command only reads. An optional path argument copies the digest there.
-    """
-    workspace = _workspace(argv)
-    record = _current(workspace)
-    if record is None:
-        print("🧠 Second Brain — no worker has run for this workspace yet.")
-        return 1
-    session_id = str(record.get("session_id", ""))
-    dump = paths.window_dump_path(session_id)
-    if not dump.exists():
-        print("🧠 Second Brain — no digest has been flushed for this session yet.")
-        print("   The worker writes it on the first window change; a worker started "
-              "before this feature existed never writes it — restart the session.")
-        return 1
-
-    text = dump.read_text(encoding="utf-8")
-    mtime = dump.stat().st_mtime
-    pending = int(record.get("pending_chars", 0) or 0)
-    print("🧠 Second Brain — digest (the observer's context window)")
-    print(f"   file: {dump}")
-    print(f"   {len(text):,} chars · flushed {_age(mtime)} · task {record.get('task_id')} "
-          f"· after pass {record.get('passes', 0)}")
-    if pending:
-        print(f"   note: {pending:,} observed chars are spooled but not yet part of any pass — "
-              f"they enter the digest when the next pass runs.")
-
-    # The first argv entry is the workspace cwd the command wrapper passes in;
-    # anything after it is a destination path chosen by the user.
-    extra = [a for a in argv[1:] if a.strip()]
-    if extra:
-        target = Path(extra[0]).expanduser()
-        try:
-            target.write_text(text, encoding="utf-8")
-            print(f"   copied to: {target}")
-        except OSError as exc:
-            print(f"   ❌ could not copy to {target}: {exc}")
-            return 1
-    return 0
-
-
 # ── why ─────────────────────────────────────────────────────────────────────
 def cmd_why(argv: list[str]) -> int:
     workspace = _workspace(argv)
@@ -383,59 +342,6 @@ def cmd_config(argv: list[str]) -> int:
     return 1
 
 
-# ── mute / unmute ───────────────────────────────────────────────────────────
-def _control(task_id: str, workspace: str, scope: str) -> Path:
-    return (paths.workspace_control_path(workspace) if scope == "workspace"
-            else paths.control_path(task_id))
-
-
-def cmd_mute(argv: list[str], *, mute: bool = True) -> int:
-    workspace = paths.workspace_key(".")
-    record = _current(workspace)
-    task_id = str((record or {}).get("task_id", "")) or "unknown"
-    target = argv[0] if argv else "all"
-    duration = 0.0
-    for arg in argv[1:]:
-        if arg.endswith(("m", "h")):
-            try:
-                duration = float(arg[:-1]) * (60 if arg.endswith("m") else 3600)
-            except ValueError:
-                duration = 0.0
-
-    scope = "workspace" if target == "workspace" else "task"
-    path = _control(task_id, workspace, scope)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
-
-    if target in {"all", "workspace"}:
-        if mute:
-            data["all"] = duration == 0.0
-            data["all_until"] = time.time() + duration if duration else 0.0
-        else:
-            data.pop("all", None)
-            data.pop("all_until", None)
-    else:
-        detectors = data.setdefault("detectors", {})
-        if mute:
-            detectors[target] = (time.time() + duration) if duration else True
-        else:
-            detectors.pop(target, None)
-    paths.write_private(path, json.dumps(data, indent=2))
-
-    window = f" for {int(duration // 60)} minutes" if duration else ""
-    if mute:
-        print(f"🔇 Second Brain muted: {target}{window} ({scope} scope).")
-        if target in {"all", "workspace"}:
-            print("   Muting stops passes and delivery — nothing is sent to the model provider "
-                  "while it holds. Observation continues locally, so unmuting resumes "
-                  "without a gap.")
-    else:
-        print(f"🔊 Second Brain unmuted: {target} ({scope} scope).")
-    return 0
-
-
 # ── forget ──────────────────────────────────────────────────────────────────
 def cmd_forget(argv: list[str]) -> int:
     workspace = paths.workspace_key(".")
@@ -457,14 +363,8 @@ def main(argv: list[str]) -> int:
         return cmd_run(rest)
     if command == "why":
         return cmd_why(rest)
-    if command == "debug":
-        return cmd_debug(rest)
     if command == "config":
         return cmd_config(rest)
-    if command == "mute":
-        return cmd_mute(rest, mute=True)
-    if command == "unmute":
-        return cmd_mute(rest, mute=False)
     if command == "forget":
         return cmd_forget(rest)
     print(__doc__)

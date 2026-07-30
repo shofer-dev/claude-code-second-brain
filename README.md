@@ -66,7 +66,7 @@ you with the same words:
 No test run observed since the first edit 40 minutes ago.
 Three new exported functions in services/foo/health.go; no test file touched.
 Evidence: Write services/foo/health.go @L1; Edit services/foo/health_test.go — not observed
-— mute with `/second-brain-mute standard-questions`
+— mute with `/second-brain-config set detectors.standard-questions.enabled false`
 ```
 
 Advice below the agent's confidence floor reaches **you only** — it never enters
@@ -80,11 +80,20 @@ is still worth a person's glance, and it is free.
 | `/second-brain-stats` | Observed vs dropped volume per tool, pass latency, window fill, token use and budget headroom, advisories generated / gated / delivered, and **uptake per detector** |
 | `/second-brain-run` | **Ask it to look now** — catches up from the transcript, runs one pass, prints every detector's verdict and any advisory. Bypasses the pass throttle, not the mute or the budget. The fastest way to see it work |
 | `/second-brain-why` | The recent advisories with their evidence and adjudicated verdicts — **and the ones the gate dropped, with the reason** |
-| `/second-brain-debug` | Where the digest — the observer's context window — is flushed on disk, verbatim and current; optionally copies it to a path you name. Purely mechanical: the worker write-throughs the window on every change, no model call involved |
 | `/second-brain-config` | Every threshold, cap and interval, with the layer each value came from; `set` validates before writing and running workers pick it up at the next pass boundary |
-| `/second-brain-mute` | Silence everything, this workspace, or one detector, optionally for a duration. A mute stops passes and delivery — nothing leaves the machine — while observation continues locally, so an unmute resumes without a gap |
-| `/second-brain-unmute` | Undo it |
 | `/second-brain-forget` | Drop a task ledger, a workspace's, or all of them |
+
+Muting and debugging are configuration, not commands:
+
+```
+/second-brain-config set mute.all true                     # silence: no passes, no delivery,
+                                                           # nothing sent (false to unmute);
+                                                           # observation continues locally
+/second-brain-config set detectors.<name>.enabled false    # mute one detector
+/second-brain-config set debug.enabled true                # capture, per pass, the digest and
+                                                           # every detector's whole loop under
+                                                           # /tmp/second-brain/<session>/<pass>/
+```
 
 ### Reading status without spending a model turn
 

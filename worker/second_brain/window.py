@@ -176,20 +176,20 @@ class Window:
                 log.warning("compaction summary failed: %s", exc)
             return ""
 
-    # ── the debug flush ─────────────────────────────────────────────────────
+    # ── the debug capture ───────────────────────────────────────────────────
     def render_digest(self, *, session_id: str, task_id: str, pass_number: int) -> str:
-        """The digest, verbatim, for `/second-brain-debug` — a pure string join.
+        """The digest, verbatim, for the debug capture — a pure string join.
 
-        Purely mechanical: no model call, no pass, no interpretation. This is
-        exactly the shared prefix every fork of the next pass would receive —
-        system block, ledger block, then every window block in order, ending at
-        the cache breakpoint. Per-fork tails are deliberately absent: they are
-        per-detector and exist only for the milliseconds a fork is in flight.
+        Purely mechanical: no model call, no interpretation. This is exactly the
+        shared prefix every fork of this pass receives — system block, ledger
+        block, then every window block in order, ending at the cache breakpoint.
+        Per-fork tails are captured separately (`<detector>.txt`), because they
+        differ per detector and exist only while a fork is in flight.
         """
         stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         header = (
             f"# Second Brain digest\n"
-            f"# session {session_id} · task {task_id} · after pass {pass_number}\n"
+            f"# session {session_id} · task {task_id} · digest for pass {pass_number}\n"
             f"# {self.chars:,} chars ({self.fill * 100:.0f}% of budget) · "
             f"{self.compactions} compaction(s) · written {stamp}\n"
             f"# Everything below is the byte-identical shared prefix of every detector fork.\n"

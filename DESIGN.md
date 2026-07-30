@@ -1317,9 +1317,9 @@ This is a control, not a courtesy, and it does three things nothing else in the 
   is already in hand.
 
 The user-addressed copy carries the same framed envelope (§Advice framing) plus the detector
-name and how to silence it — *"`standard-questions` · mute with `/second-brain-mute
-standard-questions`"* — so the response to unwanted advice is always one command away from
-where it appeared.
+name and how to silence it — *"`standard-questions` · mute with `/second-brain-config set
+detectors.standard-questions.enabled false`"* — so the response to unwanted advice is always
+one command away from where it appeared.
 
 The rule holds for **every** channel, including the finish gate (which already emits its own
 `systemMessage`) and, if it ships, the monitor path. A delivery mechanism that cannot show the
@@ -1717,12 +1717,14 @@ observing everything. That should be a decision, not a surprise:
 - **Enablement is per workspace**, with a global default. In a repo the user has not opted in,
   the feed hook checks and returns before it reads a transcript — nothing about an unenrolled
   project leaves the disk, and no worker starts.
-- **`/second-brain-mute` silences output, not input.** A mute stops passes and delivery — no
-  model call is made and nothing leaves the machine while it holds — but local observation
-  continues, so an unmute resumes with full context instead of a gap. Content observed during
-  a mute is therefore part of what the first pass after the unmute sends. To stop observation
-  itself, disable the workspace (`/second-brain-config set enable.default false`, or the
-  per-workspace entry in `enable.workspaces`).
+- **Muting silences output, not input — and it is configuration, not a command.**
+  `/second-brain-config set mute.all true` stops passes and delivery — no model call is made
+  and nothing leaves the machine while it holds — but local observation continues, so
+  unsetting it resumes with full context instead of a gap. Content observed during a mute is
+  therefore part of what the first pass after the unmute sends. The workspace layer mutes one
+  workspace, `--global` everything; a running worker picks the flip up within one tick. To
+  stop observation itself, disable the workspace (`/second-brain-config set enable.default
+  false`, or the per-workspace entry in `enable.workspaces`).
 - **Everything observed leaves the machine** to the configured model provider. That is the
   plugin's function, and exactly what PRIVACY.md must say plainly, with the projection rules
   (§The observation contract) as the concrete answer to *what*.
@@ -1788,7 +1790,7 @@ needs a live session, and §Did it land? is what measures that.
 | Worker crashes mid-task | Ledgers, offsets and advice history are on disk and survive; the window and mailbox do not. Costs a warm prefix cache and any undelivered advisory — which would have been stale anyway. |
 | Transcript offset lost | Re-seek to the file's current end; a gap in observation, never a duplicate or a crash. |
 | Observer produces bad advice | One ignorable paragraph. This is the entire reason it is forbidden from blocking. |
-| Observer too chatty | Rate limit and cooldown bound it structurally; rejected advice suppresses its own key; `/second-brain-stats` surfaces advisories/hour and per-detector uptake; `/second-brain-mute` and `/second-brain-config set gate.rate_per_hour` are one command each. |
+| Observer too chatty | Rate limit and cooldown bound it structurally; rejected advice suppresses its own key; `/second-brain-stats` surfaces advisories/hour and per-detector uptake; `/second-brain-config set mute.all true` and `set gate.rate_per_hour` are one command each. |
 | Observer gives wrong advice | The user saw it at the same instant the agent did, framed and attributed, with the mute command attached — so a bad advisory is caught by a person, not only by the next stats table. |
 | Observer flatters itself in adjudication | Verdicts need cited evidence, default to `no_evidence`, and are shown per-advisory in `/second-brain-why` for spot-checking. Uptake is reported as uptake, never as impact. |
 | Finish gate fires wrongly | Costs one continued turn, with a `systemMessage` naming the reason; capped at once per task per hour and mutable in one command. |
@@ -1830,18 +1832,18 @@ plus everything below, which is deliberately kept out of the model's context:
 - **`/second-brain-why`** — the last advisories with their evidence chains **and their
   adjudicated verdicts**, plus the last few that were *gated*, with the reason. The gate's
   decisions must be inspectable or nobody will trust the channel.
-- **`/second-brain-debug`** — where the digest (the observer's context window) is flushed on
-  disk, with its size, age, and how much observed content is spooled but not yet in it; an
-  optional argument copies it to a path of your choosing. Purely mechanical: the worker
-  write-throughs the window's exact bytes to `window/<session>.md` whenever the window
-  changes — a string join, no model call, no pass — so the command only ever reads a file,
-  and the digest stays inspectable after the worker has exited. What you see is the
-  byte-identical shared prefix every fork of the next pass would receive, ending at the
-  cache breakpoint.
-- **`/second-brain-config`** — every threshold and cap, live (§Configuration).
-- **`/second-brain-mute`** — this task, this workspace, or a named detector, with an optional
-  duration.
-- **`/second-brain-unmute`** — undo any of those.
+- **`/second-brain-config`** — every threshold and cap, live (§Configuration). Two flags in
+  it stand in for what would otherwise be commands:
+  - **`mute.all`** — silence: no passes, no delivery, nothing sent; observation continues
+    locally, and a running worker picks a flip up within one tick (§Scope and consent). A
+    single detector is muted by disabling it (`detectors.<name>.enabled false`).
+  - **`debug.enabled`** — capture: each pass writes, under
+    `<debug.path>/<session>/<pass>/`, its `digest.txt` — the byte-identical shared prefix
+    every fork of that pass received, ending at the cache breakpoint — and one
+    `<detector>.txt` per fork holding that fork's whole loop: its private input tail, every
+    model reply and tool call with its result, and its final output. Purely mechanical: the
+    files are strings the worker holds anyway, written as they happen; no model is involved
+    in producing them.
 - **`/second-brain-forget`** — drop a task ledger, a workspace's ledgers, or all of them.
 - **statusline segment** — a quiet indicator: watching / thinking / muted / cost,
   rendered by the harness running one command. **This is the only surface that costs
@@ -1857,9 +1859,8 @@ running:
 | Command | Mechanism |
 |---|---|
 | `stats`, `why` | Read the status file the worker writes through on every pass, plus the advice history and ledger index. Stale-but-readable when no worker runs, and it says so with the timestamp |
-| `debug` | Read the window dump the worker writes through on every window change — the same write-through pattern as the status file, carrying content instead of numbers |
-| `config` | Write `config.json`; running workers re-read it at their next pass boundary |
-| `mute`, `forget` | Write a control file the worker checks each pass; `forget` also unlinks ledgers directly, so it works with nothing running |
+| `config` | Write `config.json`; running workers re-read it at their next pass boundary — except `mute.all`, which the worker re-reads every tick, because a muted worker runs no passes and a pass-boundary reload would never see the unmute |
+| `forget` | Unlinks ledgers directly, so it works with nothing running |
 | statusline | Reads the same status file — cheap enough to poll, and absent means "not watching", which is the honest display |
 
 The one thing this loses against a queryable service is *liveness*: a stats read cannot force a
@@ -1910,6 +1911,8 @@ each effective value came from, because a knob you cannot trace is a knob you ca
 | `finish_gate` | `enabled`, `min_interval_s`, `per_task_cap`, `confidence_floor` | on, **3600 s**, capped, high floor | the one interrupt it may make (§The finish gate) |
 | | `background_settle_s` | how long a background launch nothing reported finished keeps the gate silent | a wrongly-resumed turn ↔ a missed one |
 | `enable` | `default`, `workspaces` | on, with per-workspace opt-out | whether a project is observed at all (§Scope and consent) |
+| `mute` | `all` | `false` | silence — no passes, no delivery, nothing sent; observation continues locally. Workspace layer mutes one workspace, `--global` everything; a single detector is muted via `detectors.<name>.enabled` |
+| `debug` | `enabled`, `path` | `false`, `/tmp/second-brain` | capture each pass's digest and every fork's whole loop (input, tool calls, final output) under `<path>/<session>/<pass>/` — purely mechanical, no model involved |
 | `adjudication` | `window_observations`, `window_seconds` | how long an outcome record stays open | measurement completeness ↔ open records |
 | `budget` | `tokens_per_task`, `tokens_per_hour` | hard ceilings; exhaustion ⇒ silence | cost ↔ coverage |
 | | `fork_deadline_s`, `fork_grace_s` | the soft deadline told to each fork, and the hard cancel after it | graceful partial answers ↔ pass latency |

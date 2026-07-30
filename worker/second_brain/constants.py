@@ -127,6 +127,20 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "default": True,
         "workspaces": {},
     },
+    # The mute: no passes, no delivery, nothing sent — observation continues
+    # locally so an unmute resumes without a gap. Workspace layer silences one
+    # workspace; the global layer silences everything. Muting a single detector
+    # is just disabling it: `detectors.<name>.enabled false`.
+    "mute": {
+        "all": False,
+    },
+    # Debug capture: when enabled, each pass writes its digest and every
+    # detector's full fork loop under <path>/<session>/<pass>/. Purely
+    # mechanical — files the worker was going to hold in memory anyway.
+    "debug": {
+        "enabled": False,
+        "path": "/tmp/second-brain",
+    },
 }
 
 # Detector definitions are a map, not a fixed set of knobs, so they carry their
@@ -298,6 +312,18 @@ SPEC: dict[str, dict[str, Any]] = {
 
     "enable.default": {"type": _BOOL, "help": "Observe workspaces that have made no explicit choice."},
     "enable.workspaces": {"type": _DICT, "help": "Per-workspace opt-in/opt-out, keyed by absolute path."},
+
+    "mute.all": {"type": _BOOL, "warn": True,
+                 "help": "Silence the Second Brain: no passes, no delivery, nothing sent. "
+                         "Observation continues locally. Set at the workspace layer for one "
+                         "workspace, --global for all; a single detector is muted by disabling "
+                         "it (detectors.<name>.enabled false)."},
+
+    "debug.enabled": {"type": _BOOL,
+                      "help": "Capture each pass's digest and every detector's full fork loop "
+                              "(input, tool calls, final output) to files."},
+    "debug.path": {"type": _STR,
+                   "help": "Where captures land: <path>/<session>/<pass>/{digest.txt, <detector>.txt}."},
 }
 
 # Knobs whose change gets an explicit warning in the command's output.

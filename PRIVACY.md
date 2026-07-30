@@ -44,11 +44,11 @@ this plugin is not for that repository.
   readable form, so no design can send them and this one does not try.
 - **Anything from a workspace that has not opted in.** The feed hook checks
   enrolment *before* it opens a transcript.
-- **Anything while a mute holds.** `/second-brain-mute all` stops passes and
-  delivery: no model call is made and nothing leaves the machine for the duration.
-  Observation itself stays local while muted, so what happened during the mute is
-  included in the first pass after an unmute — muting silences the output, it does
-  not blind the input. To stop observation entirely, disable the workspace
+- **Anything while a mute holds.** `/second-brain-config set mute.all true` stops
+  passes and delivery: no model call is made and nothing leaves the machine for the
+  duration. Observation itself stays local while muted, so what happened during the
+  mute is included in the first pass after an unmute — muting silences the output,
+  it does not blind the input. To stop observation entirely, disable the workspace
   (`/second-brain-config set enable.default false`).
 - **Ledger content, window contents, or advisory text between tasks.** The one
   thing shared across tasks is a live index of task ids, working directories,
@@ -81,18 +81,26 @@ port; there is no remote mode.
 | `history/<task>.jsonl` | every gate decision, for `/second-brain-why` | with the task |
 | `index/<workspace>.jsonl` | live cross-task paths and timestamps | `index.ttl_s` (15 min) |
 | `status/<session>.json` | the numbers `/second-brain-stats` reads | overwritten each pass |
-| `window/<session>.md` | the digest — the observer's context window, verbatim, for `/second-brain-debug` | overwritten on each window change |
-| `offsets/`, `state/`, `control/`, `finish-gate/` | transcript cursors, session→task binding, mutes, finish-gate budget | the session or task |
-| `config.json`, `workspaces/<hash>.json` | your configuration | until changed |
+| `offsets/`, `state/`, `control/`, `finish-gate/` | transcript cursors, session→task binding, the `/second-brain-run` trigger, finish-gate budget | the session or task |
+| `config.json`, `workspaces/<hash>.json` | your configuration (including mutes and the debug flag) | until changed |
 | `second-brain.log` | the worker's log | appended |
 
 `/second-brain-forget all` deletes every ledger. Removing the plugin's data
 directory removes everything above.
 
+**One opt-in exception lives outside the data directory:** with
+`debug.enabled true`, each pass writes its digest and every detector's full
+loop — including the tool outputs the observer read, such as file contents —
+under `debug.path` (default `/tmp/second-brain/<session>/<pass>/`). The files
+are created `0600` in `0700` directories like everything else, but they are
+not swept by any TTL and are not removed with the data directory: delete them
+yourself when you are done debugging, and point `debug.path` somewhere
+private if `/tmp` is not.
+
 ## Turning it off
 
 ```
-/second-brain-mute all                              # stop observing, now
+/second-brain-config set mute.all true              # silence, now: no passes, nothing sent
 /second-brain-config set enable.default false       # off everywhere by default
 /second-brain-config set enable.workspaces '{"/path/to/repo": false}'
 ```
