@@ -180,11 +180,12 @@ sides.
     compact feedback is merged back into the window, so the next pass reasons incrementally
     instead of from scratch. Stragglers are rate-limited, then disabled, then retried.
     (§One window, N parallel detector forks)
-15. **The detector contract is fixed in v1; the catalogue is not.** v1 ships the plumbing
-    plus the open-ended `default` detector. The catalogue — `standard-questions`, `git-log`,
-    `prior-art`, `static-analysis`, `repeat-failure` and the rest — is sketched only so the
-    contract is designed against real cases, and lands in shipping order afterwards.
-    (§Detectors)
+15. **The detector contract is fixed; the catalogue is data.** The plumbing ships with the
+    first three detectors of the shipping order enabled — `default`, `repeat-failure`,
+    `standard-questions`, stopping where tools begin — and the rest (`git-log`, `prior-art`,
+    `constraint-drift`, `goal-drift`, `static-analysis`, `cross-task-collision`) defined and
+    off, one config flip away. The catalogue's source of truth is the bundled
+    `detectors.json`, and `catalogue.file` swaps in a user's own (§The contract). (§Detectors)
 
 ---
 
@@ -793,12 +794,13 @@ so in `/stats` and the statusline — it never degrades to "advise anyway, cheap
 
 ---
 
-## Detectors — the contract in v1, the catalogue after
+## Detectors — the contract is fixed, the catalogue is data
 
-*What* counts as an advisable opportunity is left open on purpose. v1 ships the plumbing —
-observation, loop, window, ledger, gating, delivery, budgets, surfaces — plus **one
-detector**. The catalogue below is sketched so the contract is designed against real cases,
-not so it all gets built at once.
+*What* counts as an advisable opportunity is left open on purpose. The plumbing —
+observation, loop, window, ledger, gating, delivery, budgets, surfaces — ships with the
+**first three detectors of the shipping order enabled** (`default`, `repeat-failure`,
+`standard-questions` — stopping where tools begin) and the rest defined and off. The
+catalogue below is designed against real cases, not so it all runs at once.
 
 ### The contract
 
@@ -1054,12 +1056,15 @@ So a pass is deliberately **pilot-then-fan-out**:
 
 1. **One fork goes first, alone.** It is a real detector, not a throwaway warm-up: the prefix
    must be written once regardless, so the write may as well come with useful output.
-2. **The rest launch once the prefix is in cache.** The signal is the pilot's first streamed
-   token (the request has been processed, so the prefix is written); without streaming, its
-   completion. Being wrong here costs a duplicate cache write, not correctness.
-3. **The pilot is the cheapest, most predictable detector** — a no-tools one like
-   `repeat-failure` — so the critical path added before fan-out is as short as possible, and
-   never a detector that might spend 20 seconds in a build.
+2. **The rest launch once the prefix is in cache.** The signal is the pilot's completion —
+   the thin transport does not stream, and first-token signalling is recorded in TODO.md as a
+   possible refinement. Being conservative here costs a little latency, never correctness.
+3. **The pilot is the cheapest, most predictable detector, chosen by a fallback chain, not a
+   fixed name:** the declared pilot (`repeat-failure`) when enabled, else the first tool-less
+   enabled detector, else any enabled detector — the prefix must be written once by *someone*,
+   so disabling the declared pilot never breaks the warm-up (pinned by test). Tool-less is
+   preferred because everything else waits on the pilot, and a fork that might spend 20
+   seconds in a build stretches the critical path for the whole pass.
 
 #### What the cache actually does, measured
 

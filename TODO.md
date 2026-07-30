@@ -139,6 +139,11 @@ Confirmed against the code, accepted for now, in rough severity order:
 - **The envelope's adjudication fields are dead** (`delivered_at`/`channel`/
   `verdict` on the dataclass); delivery and verdicts live in spool META records
   and the ledger instead.
+- **The gate flowchart in DESIGN.md orders the stages differently from the
+  code** (code runs evidence → mute-free → suppression → dedup → floors, which
+  is the saner order — dedup before the confidence split stops a repeated
+  sub-floor hunch from spamming the user). The diagram, not the code, is what
+  should change.
 
 ## Catalogue status
 
