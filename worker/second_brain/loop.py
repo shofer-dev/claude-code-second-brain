@@ -13,7 +13,9 @@ rather than implied:
   and binds unconditionally; volume decides only *when* within the band it allows.
   A purely volume-driven trigger turns the primary's most productive burst into a
   pass storm — the moment it is most expensive is the moment the observer would
-  decide to run constantly.
+  decide to run constantly. One trigger is exempt from both: the primary's TURN
+  ENDING, which is the last opportunity to give feedback and is infrequent by
+  nature — it always fires a pass, and never draws from the salience bucket.
 - **Pilot-then-fan-out** (§Warm the cache before fanning out). Firing all N forks
   at once against an unwritten prefix costs N cache *creations* instead of one
   creation and N−1 reads. The pilot is a real detector, because the prefix has to
@@ -25,6 +27,7 @@ rather than implied:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -155,6 +158,7 @@ class Observer:
         self.touched: list[str] = []
         self.budget = Budget()
         self.turn_stopped = False
+        self.turn_end_pending = False
         self.forced = False
         self.background: dict[str, float] = {}
         self.finished = False
@@ -285,7 +289,12 @@ class Observer:
             self._mark_salient("user_prompt")
             self.turn_stopped = False
         elif event == "stop":
-            self._mark_salient("turn_end")
+            # A turn end is not a salient event drawing from the bucket — it is
+            # its own unconditional trigger (§Trigger policy): the last moment
+            # feedback on the turn is still cheap, and terminations are
+            # infrequent by nature, so neither the clock floor nor the volume
+            # threshold applies to the pass it fires.
+            self.turn_end_pending = True
             self.turn_stopped = True
         elif event == "subagent_stop":
             self.background.pop(str(obs.meta.get("agent_id", "")), None)
@@ -407,6 +416,15 @@ class Observer:
         if self._requested():
             self.forced = True
             return True
+        if self.turn_end_pending and self.episode:
+            # The primary's loop ended: the last opportunity to give feedback on
+            # the turn, and the one trigger exempt from BOTH cadence limits —
+            # no clock floor, no volume threshold, no salience bucket. Turn
+            # terminations are infrequent by nature, so the exemption cannot
+            # become a pass storm; mute and budget still bind (checked before
+            # this in the tick), and an empty episode still means there is
+            # nothing to judge.
+            return True
         if not self.episode:
             return False
         now = time.time()
@@ -435,8 +453,11 @@ class Observer:
         self.window.cfg = self.cfg
         self.last_pass_start = time.time()
         self.pass_number += 1
-        trigger = "requested" if self.forced else (self.salience_pending or "volume")
+        trigger = ("requested" if self.forced
+                   else "turn_end" if self.turn_end_pending
+                   else self.salience_pending or "volume")
         self.forced = False
+        self.turn_end_pending = False
         self.salience_pending = ""
         episode, self.episode = self.episode, []
         self.pending_chars = 0
@@ -493,6 +514,16 @@ class Observer:
         self.status.last_feedback = lines
 
         self._absorb(results, trigger)
+        if trigger == "turn_end" and self.cfg.get("loop.turn_end_report", True):
+            # The user asked to SEE that the turn-end look happened, verdicts and
+            # all — but the model must not: the drain hook renders this as
+            # `systemMessage` only. Claim-once, so it shows exactly one time.
+            try:
+                paths.write_private(paths.turn_report_path(self.session_id),
+                                    json.dumps({"at": time.time(), "pass": self.pass_number,
+                                                "lines": lines}))
+            except OSError as exc:
+                self.log.warning("turn report write failed: %s", exc)
         if self.window.needs_compaction():
             await self.window.compact(self.provider, self.log)
         self._save_status(time.monotonic() - started, trigger)

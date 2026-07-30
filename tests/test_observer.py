@@ -399,3 +399,29 @@ def test_debug_capture_is_off_by_default(observer):
     feed("s-obs", text(), tool())
     tick(observer)
     assert not (Path("/tmp/second-brain") / "s-obs").exists()
+
+
+# ── the turn-end trigger is exempt from every cadence limit ─────────────────
+def test_a_turn_end_fires_a_pass_past_the_floor_and_without_a_bucket(observer):
+    """Loop terminations are the last opportunity to give feedback and are
+    infrequent by nature — so the turn-end pass bypasses the clock floor, the
+    volume threshold AND the salience bucket. Mute and budget still bind."""
+    from second_brain import paths as pathsmod
+
+    observer.provider = FakeProvider({"*": [_silent()]})
+    observer.cfg.values["loop"]["min_interval_s"] = 3600      # floor would forbid it
+    observer.cfg.values["loop"]["trigger_chars"] = 10_000_000  # volume would forbid it
+    observer.cfg.values["loop"]["salience_per_hour"] = 0       # bucket is empty
+    observer.last_pass_start = time.time()
+
+    feed("s-obs", text("wrapping up"), meta("stop"))
+    tick(observer)
+
+    assert observer.pass_number == 1
+    assert observer.status.note == "triggered by turn_end"
+    # …and the verdicts were written for the human-only turn report.
+    report = pathsmod.turn_report_path("s-obs")
+    assert report.exists()
+    import json as jsonmod
+    lines = jsonmod.loads(report.read_text())["lines"]
+    assert any("repeat-failure" in line for line in lines)

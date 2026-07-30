@@ -50,6 +50,30 @@ def _record_delivery(session_id: str, advisory: Advisory, channel: str) -> None:
     )])
 
 
+def _claim_turn_report(session_id: str, max_age_s: float) -> str:
+    """The last turn-end pass's verdicts, once, for the HUMAN only.
+
+    The Stop hook returns milliseconds after a turn ends while the turn-end pass
+    takes seconds, so the report is written by the worker when the pass completes
+    and shown here at the next interaction. Claimed by unlink: exactly once,
+    whichever drain gets there first. Never placed in the model's context —
+    verdicts about the agent's turn are for the person supervising it.
+    """
+    path = paths.turn_report_path(session_id)
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        path.unlink()
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(report, dict) or time.time() - float(report.get("at", 0)) > max_age_s:
+        return ""
+    lines = [str(line) for line in report.get("lines") or []]
+    if not lines:
+        return ""
+    return ("🧠 Second Brain — turn-end verdicts (not shown to the agent):\n   "
+            + "\n   ".join(lines))
+
+
 def _finish_gate_budget(task_id: str, cfg: Config) -> tuple[bool, str]:
     """Whether the finish gate may fire for this task right now."""
     path = paths.finish_gate_path(task_id)
@@ -103,15 +127,19 @@ def main(mode: str) -> int:
     if mode == "stop":
         return _drain_stop(payload, session_id, cfg, queue_timeout, headline_cap, body_cap)
 
+    report = _claim_turn_report(session_id, queue_timeout)
     advisory = mailbox.claim(session_id, queue_timeout_s=queue_timeout,
                              predicate=lambda a: not a.finish_gate)
     if advisory is None:
+        if report:
+            print(json.dumps({"systemMessage": report}))
         return 0
 
     _record_delivery(session_id, advisory, mode)
     if advisory.human_only:
         # Sub-threshold: the person hears about it, the model's context is untouched.
-        print(json.dumps({"systemMessage": advisory.for_user_only(headline_cap, body_cap)}))
+        text = advisory.for_user_only(headline_cap, body_cap)
+        print(json.dumps({"systemMessage": text + ("\n\n" + report if report else "")}))
         return 0
 
     print(json.dumps({
@@ -119,7 +147,10 @@ def main(mode: str) -> int:
             "hookEventName": HOOK_EVENT.get(mode, "PostToolUse"),
             "additionalContext": advisory.for_agent(headline_cap, body_cap),
         },
-        "systemMessage": advisory.for_user(headline_cap, body_cap),
+        # The turn report rides the user-facing field ONLY — it is a human
+        # surface, and the agent's copy above deliberately does not carry it.
+        "systemMessage": advisory.for_user(headline_cap, body_cap)
+        + ("\n\n" + report if report else ""),
     }))
     return 0
 

@@ -245,6 +245,13 @@ def trigger_path(session_id: str) -> Path:
     return data_dir() / "control" / f"{safe_name(session_id)}.run"
 
 
+def turn_report_path(session_id: str) -> Path:
+    """The turn-end verdict report: written by the worker when a turn-end pass
+    completes, claimed once by the drain hook, and shown to the HUMAN only —
+    it never enters the model's context."""
+    return data_dir() / "turn-report" / f"{safe_name(session_id)}.json"
+
+
 def config_path() -> Path:
     return data_dir() / "config.json"
 

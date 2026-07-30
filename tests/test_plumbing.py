@@ -654,3 +654,20 @@ def test_an_untyped_subagent_stop_is_the_harness_talking_to_itself(tmp_path):
     })
     assert result.returncode == 0
     assert spool.SpoolReader("s-ui").read() == []
+
+
+def test_the_turn_report_reaches_the_human_only_and_exactly_once(tmp_path):
+    """The turn-end verdicts render as `systemMessage` alone — never as
+    additionalContext — and the claim-by-unlink makes them show one time."""
+    paths.write_private(paths.turn_report_path("s-tr"), json.dumps({
+        "at": time.time(), "pass": 5,
+        "lines": ["[pass 5, 12:00] default → silent"],
+    }))
+    result = run_hook("drain.py", "tool", {"session_id": "s-tr", "cwd": str(tmp_path)})
+    emitted = json.loads(result.stdout)
+    assert "turn-end verdicts" in emitted["systemMessage"]
+    assert "default → silent" in emitted["systemMessage"]
+    assert "hookSpecificOutput" not in emitted            # the model never sees it
+
+    again = run_hook("drain.py", "tool", {"session_id": "s-tr", "cwd": str(tmp_path)})
+    assert again.stdout == ""                             # claimed exactly once

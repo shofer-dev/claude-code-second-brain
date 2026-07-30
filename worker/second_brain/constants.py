@@ -39,8 +39,12 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "min_interval_s": 90,
         "trigger_chars": 6000,
         "max_interval_s": 900,
-        "salience_triggers": ["error", "user_prompt", "turn_end"],
+        # Turn ends are deliberately NOT here: a turn end is its own
+        # unconditional trigger, exempt from the floor, the volume threshold
+        # and this bucket (§Trigger policy).
+        "salience_triggers": ["error", "user_prompt"],
         "salience_per_hour": 6,
+        "turn_end_report": True,
         "backoff_on_budget": True,
         "poll_interval_s": 2.0,
         "fork_deadline_s": 20,
@@ -195,9 +199,14 @@ SPEC: dict[str, dict[str, Any]] = {
     "loop.max_interval_s": {"type": _INT, "min": 30, "max": 86400,
                             "help": "Liveness floor: a pass at least this often while input is pending."},
     "loop.salience_triggers": {"type": _LIST,
-                               "help": "Which events may fire a pass early."},
+                               "help": "Which events may fire a pass early, from the hourly "
+                                       "bucket. A turn end is not one of them: it always "
+                                       "fires a pass, exempt from every cadence limit."},
     "loop.salience_per_hour": {"type": _INT, "min": 0, "max": 240,
                                "help": "Hourly bucket for early (salient) passes."},
+    "loop.turn_end_report": {"type": _BOOL,
+                             "help": "Show the turn-end pass's per-detector verdicts to the "
+                                     "USER at the next interaction (never to the agent)."},
     "loop.backoff_on_budget": {"type": _BOOL,
                                "help": "Stretch min_interval_s as the hourly budget depletes."},
     "loop.poll_interval_s": {"type": _FLOAT, "min": 0.1, "max": 60.0,

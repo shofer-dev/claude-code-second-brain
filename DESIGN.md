@@ -554,10 +554,21 @@ So the cadence is governed by **two limits that both bind**, not by whichever fi
 | **Clock floor** — no pass may start within this of the previous pass's *start* | `loop.min_interval_s` | **The throttle.** Binds unconditionally: however much the primary emits, the pass rate cannot exceed `3600 / min_interval_s` per hour. |
 | **Volume** — projected characters accumulated since the last pass | `loop.trigger_chars` | **The proportionality.** Within the floor, more input means passes come sooner; a quiet session simply does not trigger. |
 | **Clock ceiling** — a pass at least this often while input is pending | `loop.max_interval_s` | **The liveness floor.** A slow session still gets looked at. |
-| **Salience allowance** — errors, new user prompts, turn ends | `loop.salience_per_hour` | **The exception, and it is bounded.** A salient event may fire early, drawing from a small hourly bucket — otherwise a crashloop emitting an error every two seconds spins the observer through the floor. |
+| **Salience allowance** — errors, new user prompts | `loop.salience_per_hour` | **The exception, and it is bounded.** A salient event may fire early, drawing from a small hourly bucket — otherwise a crashloop emitting an error every two seconds spins the observer through the floor. |
 
 Effective rate: **`passes/hour ≈ min(volume ÷ trigger_chars, 3600 ÷ min_interval_s)` + salience
-draws**. Volume decides *when* within the allowed band; the clock decides *how often at most*.
+draws + turn ends**. Volume decides *when* within the allowed band; the clock decides *how
+often at most*.
+
+**One trigger is exempt from every limit above: the primary's turn ending.** A loop
+termination is the last opportunity to give feedback on the turn — after it, the person reads
+the final message and moves on — and turns end infrequently by nature, so the exemption cannot
+become a pass storm. A turn end therefore always fires a pass: no clock floor, no volume
+threshold, and no draw from the salience bucket. What still binds is what means something —
+the mute, the budget, single-flight, and an empty episode (a turn that produced nothing new
+has nothing to judge). The pass's per-detector verdicts are additionally written to a
+claim-once **turn report** shown to the *user only* at the next interaction
+(`loop.turn_end_report`, §Human surfaces).
 
 **Bursts are absorbed, not chased.** While throttled, observations keep accumulating and
 coalescing, so the next pass sees a larger episode rather than the queue generating more
@@ -1854,6 +1865,12 @@ plus everything below, which is deliberately kept out of the model's context:
     files are strings the worker holds anyway, written as they happen; no model is involved
     in producing them.
 - **`/second-brain-forget`** — drop a task ledger, a workspace's ledgers, or all of them.
+- **the turn-end report** — every time the primary's loop ends, the pass it fires
+  (§Trigger policy) writes its per-detector verdicts to a claim-once file, and the next
+  hook interaction renders them as `systemMessage` — visible to the person, **never** in
+  the model's context, exactly once (`loop.turn_end_report`, default on). The Stop hook
+  returns in milliseconds while the pass takes seconds, which is why the report arrives at
+  the next interaction rather than inside the ending turn itself.
 - **statusline segment** — a quiet indicator: watching / thinking / muted / cost,
   rendered by the harness running one command. **This is the only surface that costs
   nothing at all**: a slash command in Claude Code is a prompt, so it spends a model
@@ -1920,6 +1937,7 @@ each effective value came from, because a knob you cannot trace is a knob you ca
 | | **`trigger_chars`** | volume proportionality within the throttle | passes track how much is happening |
 | | `max_interval_s` | liveness — a pass at least this often while input is pending | a slow session still gets looked at |
 | | `salience_triggers`, `salience_per_hour` | which events may fire early, and how many per hour | responsiveness ↔ a crashloop spinning the loop |
+| | `turn_end_report` | show the turn-end pass's verdicts to the user only, once, at the next interaction | visibility ↔ UI noise |
 | | `backoff_on_budget` | stretch `min_interval_s` as the hourly budget depletes | graceful degradation ↔ abrupt silence |
 | `window` | `compaction_threshold`, `compaction_floor` | 0.85 / 0.60 of the model's window | cache stability ↔ compaction frequency (the floor is what prevents per-pass thrash) |
 | `ledger` | `ttl_days`, `max_per_workspace`, `max_bytes`, `sweep_interval_s` | 7 days, caps, periodic sweep | how long an abandoned task's judgment lingers (§GC) |
