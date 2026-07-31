@@ -609,14 +609,36 @@ preconditions for *any* provider's caching, however that provider realizes them 
 `cache_control` breakpoints on Anthropic, implicit prefix matching elsewhere):
 
 ```
-[ tools: the union of this pass's detector grants ]       ← byte-identical across forks
-[ shared system prompt + workspace block ]                ← stable for the task's lifetime
-[ task ledger ]                                           ← changes ONLY at a compaction
-[ observations (incl. this pass's episode) + feedback ]   ← append-only
-──────────────────────────── cache breakpoint ────────────────────────────
-[ per-fork: detector instructions, its allowed tools,     ] ← differs per fork,
-[ its open advisories, its time and length budget         ]   never cached, never shared
+┌ tools: the union of this pass's detector grants ─────────┐ byte-identical across forks
+├ system: shared observer prompt + workspace block ────────┤ fixed for the task's lifetime
+├ task ledger  (ONE block, ≤6000 chars, at the head) ──────┤ (re)rendered ONLY at task load + compaction
+│    · goal
+│    · established facts  — compaction summaries (≤60 kept)
+│    · open advice (last 10) · adjudicated advice (last 10)
+│    · suppressed keys (last 10)
+├ observations + feedback  (append-only, ≤ budget_chars) ──┤ one block appended per pass
+│    · observation blocks — what was RUN (model text, tool
+│      calls); tool RESULTS and META lines are dropped
+│    · note blocks — task boundaries / structural triggers
+│    · feedback blocks — each pass's detector conclusions
+│      (their verdicts/headlines, never their tool calls)
+├──────────────────────── cache breakpoint ────────────────┤
+└ per-fork tail  (NOT shared, NOT cached) ─────────────────┘ differs per detector fork
+     · the detector's instructions · its allowed tools
+     · its open advisories · its time + length budget
 ```
+
+**What each segment carries, how big it is, and when it changes:**
+
+| Segment | Contents | Size / cap | Changes |
+| --- | --- | --- | --- |
+| **tools** | the pass's detector grants, unioned (per-detector access is enforced at dispatch, not by this list) | small | only when the active detector set/grants change |
+| **system** | the shared observer prompt + a workspace block (repo root, cwd) | fixed | never, for the task's lifetime |
+| **task ledger** | `goal`; **established facts** (the neutral compaction summaries of evicted spans); **open** + **adjudicated** advice; **suppressed** dedup-keys the primary rejected. (`calibration`/uptake is stored but not rendered.) | **≤6000 chars rendered**; ≤60 fact entries + ≤200 advice rows stored on disk | at **task load** and at **compaction** only — never mid-run (new advice rides the observation region until the next compaction folds it in) |
+| **observations + feedback** | per-pass projected observations (**what was run** — model text and tool *calls*; tool *results* and META are never included), task-boundary/trigger notes, and each pass's detector conclusions | grows to `window.budget_chars` (**400 000 default ≈ ~100k tokens**); compaction fires at **85%** fill and evicts down to a **60%** floor | **appended every pass** (the only routine mutation) |
+| **per-fork tail** | one detector's instructions, its allowed-tool grant, its open advisories, and its iteration/time/length budget | small | per fork; **below the cache breakpoint**, so it is neither shared nor cached |
+
+Sizing is set by the observer's *own* model, not the primary's: the default observer is **Haiku 4.5 (200k-token context)**, so `budget_chars` at 400 000 (~100k tokens) is roughly **half** that window — the remaining headroom absorbs each fork's tail plus its output. Raising the budget toward a model's full context (or moving to a larger-context model) is a `window.budget_chars` + `model.name` decision, traded against the fact that this prefix is re-read on **every** pass.
 
 Everything above the breakpoint is **byte-identical across every detector fork** — that is what
 makes the fan-out cheap (§Warm the cache before fanning out). The provider's cache key is a
